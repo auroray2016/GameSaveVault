@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GameSaveManager</RootNamespace>
+    <AssemblyName>GameSaveVault</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe/资源管理器图标（多尺寸 ico：16/24/32/48/64/128/256） -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 同一 ico 作为 WPF 窗口标题栏/任务栏图标（Resource 供 pack URI 引用） -->
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 冒烟测试需要访问 WebDavClient.Url 等内部成员 -->
+    <InternalsVisibleTo Include="SmokeTest" />
+  </ItemGroup>
+
+  <!-- 发布时间：publish 时通过 -p:BuildDate="yyyy-MM-dd HH:mm" 写入程序集，关于页读取展示。
+       开发构建不传该属性时，程序回退显示主程序文件的最后修改时间。 -->
+  <ItemGroup Condition="'$(BuildDate)' != ''">
+    <AssemblyMetadata Include="BuildDate" Value="$(BuildDate)" />
+  </ItemGroup>
+
+  <!-- 预置中文名库：随程序发布到输出目录 Data\，运行时只读兜底（用户库优先）。
+       ExcludeFromSingleFile=true 确保单文件发布时 Data\ 留在 exe 旁，不被打包进 bundle。 -->
+  <ItemGroup>
+    <None Include="Data\cnnames.default.json" CopyToOutputDirectory="PreserveNewest">
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+  </ItemGroup>
+
+</Project>

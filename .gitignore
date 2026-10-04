@@ -1,0 +1,18 @@
+# ── 构建产物 ──
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+
+# ── 发布包（便携版/zip/安装包，体积大且可重新构建）──
+[Pp]ublish/
+*.zip
+
+# ── 测试结果 ──
+[Tt]est[Rr]esult*/
+
+# ── 系统/编辑器噪声 ──
+Thumbs.db
+desktop.ini
+*.log

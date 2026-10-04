@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>游戏存档管家 · UI 样板</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #12141a;
+    --panel: #1a1d25;
+    --panel2: #20242e;
+    --border: #2a2f3b;
+    --text: #e6eaf2;
+    --text2: #929bb0;
+    --accent: #4f8cff;
+    --accent2: #22d3ee;
+    --green: #34d399;
+    --orange: #fbbf24;
+    --red: #f87171;
+  }
+  body {
+    background: radial-gradient(1200px 800px at 50% 30%, #171b24, #0a0c10);
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .app {
+    width: 1240px;
+    height: 800px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.65);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── 标题栏 ─────────────────────────── */
+  .titlebar {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .titlebar .logo {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    margin-right: 10px;
+  }
+  .titlebar .name { font-size: 13px; font-weight: 600; }
+  .titlebar .name span { color: var(--text2); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .win-controls { margin-left: auto; display: flex; gap: 6px; }
+  .win-controls div {
+    width: 30px; height: 26px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); font-size: 12px; cursor: pointer;
+  }
+  .win-controls div:hover { background: var(--panel2); color: var(--text); }
+  .win-controls .close:hover { background: #e81123; color: #fff; }
+
+  /* ── 工具栏 ─────────────────────────── */
+  .toolbar {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 14px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--accent); background: rgba(79,140,255,.12); }
+  .btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), #3b6fd9);
+    border: none; color: #fff; font-weight: 600;
+  }
+  .btn.primary:hover { filter: brightness(1.12); }
+  .toolbar .spacer { flex: 1; }
+
+  /* ── 主体布局 ────────────────────────── */
+  .main { flex: 1; display: flex; min-height: 0; }
+
+  /* 侧边栏 */
+  .sidebar {
+    width: 310px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  .search-wrap { padding: 12px 14px 8px; }
+  .search {
+    width: 100%; height: 34px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0 12px 0 34px;
+    font-size: 13px;
+    outline: none;
+  }
+  .search:focus { border-color: var(--accent); }
+  .search-box { position: relative; }
+  .search-box svg {
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; stroke: var(--text2); fill: none; stroke-width: 2;
+  }
+  .filters { display: flex; gap: 6px; padding: 0 14px 10px; }
+  .chip {
+    padding: 5px 12px; border-radius: 999px;
+    font-size: 12px; color: var(--text2);
+    border: 1px solid var(--border);
+    cursor: pointer; transition: all .15s;
+  }
+  .chip:hover { color: var(--text); }
+  .chip.active {
+    background: rgba(79,140,255,.15);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .gamelist { flex: 1; overflow-y: auto; padding: 4px 10px 10px; }
+  .game-item {
+    display: flex; align-items: center; gap: 11px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background .12s;
+  }
+  .game-item:hover { background: var(--panel2); }
+  .game-item.active {
+    background: linear-gradient(90deg, rgba(79,140,255,.16), rgba(79,140,255,.03));
+    border-color: rgba(79,140,255,.4);
+  }
+  .g-icon {
+    width: 46px; height: 46px;
+    border-radius: 9px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    position: relative;
+  }
+  .g-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .g-icon .fallback {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 19px; font-weight: 700; color: #fff;
+  }
+  .g-info { min-width: 0; flex: 1; }
+  .g-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .g-sub { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge {
+    font-size: 10px; padding: 1.5px 7px; border-radius: 5px;
+    flex-shrink: 0; font-weight: 600;
+  }
+  .badge.steam { background: rgba(102,192,244,.14); color: #66c0f4; border: 1px solid rgba(102,192,244,.3); }
+  .badge.local { background: rgba(251,191,36,.12); color: var(--orange); border: 1px solid rgba(251,191,36,.3); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .dot.off { background: #3a4150; }
+  .side-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text2);
+    display: flex; justify-content: space-between;
+  }
+
+  /* 详情区 */
+  .detail { flex: 1; overflow-y: auto; min-width: 0; }
+  .banner {
+    height: 172px;
+    position: relative;
+    background: linear-gradient(135deg, #232a3a, #1a1d25);
+    overflow: hidden;
+  }
+  .banner img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; opacity: .85; }
+  .banner .shade {
+    position: absolute; inset: 0;
+    background: linear-gradient(to top, var(--bg) 2%, rgba(18,20,26,.25) 55%, rgba(18,20,26,.1));
+  }
+  .head-info {
+    position: absolute; left: 26px; bottom: 16px; right: 26px;
+    display: flex; align-items: flex-end; gap: 16px;
+  }
+  .head-icon {
+    width: 82px; height: 82px;
+    border-radius: 14px;
+    border: 2px solid rgba(255,255,255,.15);
+    overflow: hidden;
+    background: var(--panel2);
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    flex-shrink: 0;
+  }
+  .head-icon img { width: 100%; height: 100%; object-fit: cover; }
+  .head-icon .fallback {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; font-weight: 700; color: #fff;
+  }
+  .head-text h1 { font-size: 22px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.6); }
+  .head-text .en { font-size: 12.5px; color: var(--text2); margin-top: 3px; }
+  .head-tags { display: flex; gap: 8px; margin-top: 8px; }
+
+  .content { padding: 18px 26px 24px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .card-hd {
+    display: flex; align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-hd .t { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .card-hd .t svg { width: 16px; height: 16px; stroke: var(--accent2); fill: none; stroke-width: 1.8; }
+  .card-hd .act { margin-left: auto; display: flex; gap: 8px; }
+  .btn.sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+
+  .path-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid rgba(42,47,59,.5);
+    font-size: 12.5px;
+  }
+  .path-row:last-child { border-bottom: none; }
+  .path-row .icon-folder { color: var(--accent2); flex-shrink: 0; }
+  .path-row code {
+    font-family: Consolas, monospace;
+    color: #c3cad8;
+    background: var(--bg);
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    flex: 1;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tag-ok { font-size: 11px; color: var(--green); flex-shrink: 0; }
+  .tag-miss { font-size: 11px; color: var(--red); flex-shrink: 0; }
+
+  /* 备份表 */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th {
+    text-align: left; padding: 9px 16px;
+    color: var(--text2); font-weight: 500; font-size: 11.5px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid rgba(42,47,59,.5); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(79,140,255,.04); }
+  td .note { color: var(--text); }
+  td .size { color: var(--text2); font-family: Consolas, monospace; }
+  td .time { color: var(--text2); font-family: Consolas, monospace; }
+  .row-act { display: flex; gap: 6px; justify-content: flex-end; }
+  .icon-btn {
+    height: 26px; padding: 0 10px; font-size: 11.5px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text2);
+    cursor: pointer; transition: all .15s;
+  }
+  .icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .icon-btn.danger:hover { color: var(--red); border-color: var(--red); }
+
+  /* 底部操作栏 */
+  .action-bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+  }
+  .btn.big { height: 40px; padding: 0 26px; font-size: 14px; border-radius: 10px; }
+  .toggle-wrap { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text2); cursor: pointer; user-select: none; }
+  .switch {
+    width: 40px; height: 22px;
+    background: #333a48;
+    border-radius: 999px;
+    position: relative;
+    transition: background .2s;
+  }
+  .switch::after {
+    content: ""; position: absolute;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; top: 3px; left: 3px;
+    transition: left .2s;
+  }
+  .switch.on { background: var(--green); }
+  .switch.on::after { left: 21px; }
+
+  /* 状态栏 */
+  .statusbar {
+    height: 28px;
+    display: flex; align-items: center; gap: 18px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .statusbar .k { color: #6b7488; }
+
+  /* Toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 60px;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(28,32,42,.95);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 11px 22px;
+    border-radius: 10px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .25s;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    z-index: 99;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: #2e3441; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4150; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .empty { padding: 40px; text-align: center; color: var(--text2); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- 标题栏 -->
+  <div class="titlebar">
+    <div class="logo">💾</div>
+    <div class="name">游戏存档管家 <span>GameSaveVault v0.1 · UI 样板</span></div>
+    <div class="win-controls">
+      <div>—</div><div>▢</div><div class="close">✕</div>
+    </div>
+  </div>
+
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <button class="btn primary" onclick="toast('开始扫描 Steam 游戏库…（演示）')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      扫描 Steam
+    </button>
+    <button class="btn" onclick="toast('正在扫描 D:\\Games …（演示）')">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      扫描文件夹
+    </button>
+    <button class="btn" onclick="toast('选择游戏 exe…（演示）')">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      手动添加
+    </button>
+    <div class="spacer"></div>
+    <button class="btn" onclick="toast('打开设置…（演示）')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      设置
+    </button>
+  </div>
+
+  <div class="main">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="search-wrap">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input class="search" id="search" placeholder="搜索游戏…">
+        </div>
+      </div>
+      <div class="filters">
+        <div class="chip active" data-f="all">全部</div>
+        <div class="chip" data-f="steam">Steam</div>
+        <div class="chip" data-f="local">学习版</div>
+      </div>
+      <div class="gamelist" id="gamelist"></div>
+      <div class="side-footer">
+        <span>共 <b id="cnt">0</b> 款游戏</span>
+        <span>备份占用 1.2 GB</span>
+      </div>
+    </aside>
+
+    <!-- 详情 -->
+    <section class="detail" id="detail"></section>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="statusbar">
+    <span><span class="k">上次自动备份：</span>2026-09-06 14:20（艾尔登法环）</span>
+    <span><span class="k">监控中：</span>2 个游戏进程</span>
+    <span style="margin-left:auto"><span class="k">备份目录：</span>E:\GameBackups</span>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const games = [
+  {
+    id: 1, cn: "艾尔登法环", en: "ELDEN RING", type: "steam", appid: 1245620,
+    exe: "D:\\Steam\\steamapps\\common\\ELDEN RING\\Game\\eldenring.exe",
+    lastBackup: "2 小时前", auto: true,
+    paths: [
+      { p: "C:\\Users\\DR\\AppData\\Roaming\\EldenRing\\76561198000000000", ok: true },
+      { p: "D:\\Steam\\userdata\\103945820\\1245620\\remote", ok: true }
+    ],
+    backups: [
+      { time: "2026-09-06 14:20", note: "备战「黄金树幽影」DLC", size: "12.4 MB" },
+      { time: "2026-09-05 23:05", note: "一周目通关", size: "11.8 MB" },
+      { time: "2026-08-30 21:47", note: "自动备份（游戏退出）", size: "10.9 MB" }
+    ]
+  },
+  {
+    id: 2, cn: "赛博朋克 2077", en: "Cyberpunk 2077", type: "steam", appid: 1091500,
+    exe: "D:\\Steam\\steamapps\\common\\Cyberpunk 2077\\bin\\x64\\Cyberpunk2077.exe",
+    lastBackup: "昨天", auto: true,
+    paths: [
+      { p: "C:\\Users\\DR\\Saved Games\\CD Projekt Red\\Cyberpunk 2077", ok: true }
+    ],
+    backups: [
+      { time: "2026-09-05 19:32", note: "装光追 Mod 前", size: "86.2 MB" },
+      { time: "2026-09-01 10:15", note: "自动备份（游戏退出）", size: "84.7 MB" }
+    ]
+  },
+  {
+    id: 3, cn: "星露谷物语", en: "Stardew Valley", type: "local", appid: null,
+    exe: "E:\\Games\\Stardew Valley\\Stardew Valley.exe",
+    lastBackup: "3 天前", auto: false,
+    paths: [
+      { p: "C:\\Users\\DR\\AppData\\Roaming\\StardewValley\\Saves", ok: true },
+      { p: "E:\\Games\\Stardew Valley\\Mods", ok: false, miss: true }
+    ],
+    backups: [
+      { time: "2026-09-03 22:10", note: "第 4 年春季存档", size: "3.1 MB" },
+      { time: "2026-08-28 20:44", note: "手动备份", size: "2.9 MB" }
+    ]
+  },
+  {
+    id: 4, cn: "只狼：影逝二度", en: "Sekiro: Shadows Die Twice", type: "local", appid: null,
+    exe: "E:\\Games\\Sekiro\\sekiro.exe",
+    lastBackup: "未备份", auto: false,
+    paths: [
+      { p: "C:\\Users\\DR\\AppData\\Roaming\\Sekiro\\76561198000000000", ok: true }
+    ],
+    backups: []
+  },
+  {
+    id: 5, cn: "怪物猎人：世界", en: "MONSTER HUNTER: WORLD", type: "local", appid: null,
+    exe: "E:\\Games\\MHW\\MonsterHunterWorld.exe",
+    lastBackup: "上周", auto: false,
+    paths: [
+      { p: "C:\\Program Files (x86)\\Steam\\userdata\\103945820\\582010\\remote", ok: true },
+      { p: "HKCU\\Software\\ Capcom\\MonsterHunterWorld（注册表）", ok: true, reg: true }
+    ],
+    backups: [
+      { time: "2026-08-29 23:58", note: "灭尽龙讨伐前", size: "15.6 MB" }
+    ]
+  },
+  {
+    id: 6, cn: "文明 VI", en: "Sid Meier's Civilization VI", type: "steam", appid: 289070,
+    exe: "D:\\Steam\\steamapps\\common\\Sid Meier's Civilization VI\\Base\\Binaries\\Win64Steam\\Civ6.exe",
+    lastBackup: "1 小时前", auto: false,
+    paths: [
+      { p: "C:\\Users\\DR\\Documents\\My Games\\Sid Meier's Civilization VI\\Saves", ok: true },
+      { p: "HKCU\\Software\\Firaxis Games\\Sid Meier's Civilization VI（注册表）", ok: true, reg: true }
+    ],
+    backups: [
+      { time: "2026-09-06 13:02", note: "神标千湖110T", size: "22.8 MB" }
+    ]
+  },
+  {
+    id: 7, cn: "空洞骑士", en: "Hollow Knight", type: "steam", appid: 367520,
+    exe: "D:\\Steam\\steamapps\\common\\Hollow Knight\\hollow_knight.exe",
+    lastBackup: "未备份", auto: false,
+    paths: [
+      { p: "C:\\Users\\DR\\AppData\\LocalLow\\Team Cherry\\Hollow Knight", ok: true }
+    ],
+    backups: []
+  },
+  {
+    id: 8, cn: "求生之路 2", en: "Left 4 Dead 2", type: "steam", appid: 550,
+    exe: "D:\\Steam\\steamapps\\common\\Left 4 Dead 2\\left4dead2.exe",
+    lastBackup: "未备份", auto: false,
+    paths: [
+      { p: "D:\\Steam\\userdata\\103945820\\550\\remote\\cfg", ok: true }
+    ],
+    backups: []
+  }
+];
+
+let filter = "all";
+let keyword = "";
+let selectedId = games[0].id;
+
+const typeBadge = t => t === "steam" ? '<span class="badge steam">Steam</span>' : '<span class="badge local">学习版</span>';
+
+function iconHTML(g, big) {
+  const grad = ["linear-gradient(135deg,#6366f1,#a855f7)","linear-gradient(135deg,#f59e0b,#ef4444)",
+                "linear-gradient(135deg,#10b981,#0ea5e9)","linear-gradient(135deg,#ec4899,#f97316)",
+                "linear-gradient(135deg,#3b82f6,#22d3ee)"][g.id % 5];
+  const ch = g.cn.charAt(0);
+  if (g.appid) {
+    const url = `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/header.jpg`;
+    return `<img src="${url}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="fallback" style="background:${grad};display:none">${ch}</div>`;
+  }
+  return `<div class="fallback" style="background:${grad}">${ch}</div>`;
+}
+
+function renderList() {
+  const list = games.filter(g =>
+    (filter === "all" || g.type === filter) &&
+    (g.cn.toLowerCase().includes(keyword) || g.en.toLowerCase().includes(keyword))
+  );
+  document.getElementById("gamelist").innerHTML = list.length ? list.map(g => `
+    <div class="game-item ${g.id === selectedId ? "active" : ""}" onclick="selectGame(${g.id})">
+      <div class="g-icon">${iconHTML(g)}</div>
+      <div class="g-info">
+        <div class="g-name">${g.cn}</div>
+        <div class="g-meta">
+          ${typeBadge(g.type)}
+          <span class="g-sub">${g.lastBackup}</span>
+        </div>
+      </div>
+      <div class="dot ${g.auto ? "" : "off"}" title="${g.auto ? "自动备份已开启" : "自动备份未开启"}"></div>
+    </div>
+  `).join("") : `<div class="empty">没有匹配的游戏</div>`;
+  document.getElementById("cnt").textContent = list.length;
+}
+
+function renderDetail() {
+  const g = games.find(x => x.id === selectedId);
+  const banner = g.appid
+    ? `<img src="https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/library_hero.jpg"
+           onerror="this.style.display='none'"><div class="shade"></div>`
+    : `<div class="shade"></div>`;
+  const total = g.backups.length;
+  document.getElementById("detail").innerHTML = `
+    <div class="banner">${banner}
+      <div class="head-info">
+        <div class="head-icon">${iconHTML(g, true)}</div>
+        <div class="head-text">
+          <h1>${g.cn}</h1>
+          <div class="en">${g.en} · ${g.type === "steam" ? "Steam 正版" : "学习版"}</div>
+          <div class="head-tags">${typeBadge(g.type)}<span class="badge" style="background:var(--panel2);color:var(--text2);border:1px solid var(--border)">历史备份 ${total} 份</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="content">
+      <!-- 存档位置 -->
+      <div class="card">
+        <div class="card-hd">
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>存档位置（${g.paths.length}）</div>
+          <div class="act">
+            <button class="btn sm" onclick="toast('选择存档文件夹…（演示）')">＋ 添加路径</button>
+          </div>
+        </div>
+        ${g.paths.map(pt => `
+          <div class="path-row">
+            <span class="icon-folder">▸</span>
+            <code>${pt.p}</code>
+            ${pt.reg ? '<span class="tag-ok">注册表</span>' : (pt.ok ? '<span class="tag-ok">● 已找到</span>' : '<span class="tag-miss">● 未找到</span>')}
+            <button class="icon-btn" onclick="toast('打开所在文件夹（演示）')">打开</button>
+            <button class="icon-btn danger" onclick="toast('已移除该路径（演示）')">移除</button>
+          </div>
+        `).join("")}
+        <div class="path-row" style="color:var(--text2);font-size:11.5px">
+          游戏目录：<code style="flex:0 1 auto;margin-right:8px">${g.exe}</code>
+          <button class="icon-btn" onclick="toast('已复制游戏 exe 路径（演示）')">复制</button>
+        </div>
+      </div>
+      <!-- 备份记录 -->
+      <div class="card">
+        <div class="card-hd">
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>备份记录</div>
+          <div class="act"><span style="font-size:11.5px;color:var(--text2)">保留策略：每游戏最多 10 份</span></div>
+        </div>
+        ${total ? `
+        <table>
+          <tr><th style="width:170px">时间</th><th>备注</th><th style="width:100px">大小</th><th style="width:150px"></th></tr>
+          ${g.backups.map(b => `
+            <tr>
+              <td class="time">${b.time}</td>
+              <td><span class="note">${b.note}</span></td>
+              <td class="size">${b.size}</td>
+              <td><div class="row-act">
+                <button class="icon-btn" onclick="toast('已还原「${b.note}」（还原前已自动备份当前存档 · 演示）')">还原</button>
+                <button class="icon-btn danger" onclick="toast('已删除该备份（演示）')">删除</button>
+              </div></td>
+            </tr>
+          `).join("")}
+        </table>` : `<div class="empty">暂无备份记录，点击下方「立即备份」创建第一份快照</div>`}
+      </div>
+      <!-- 操作栏 -->
+      <div class="action-bar" style="border:1px solid var(--border);border-radius:12px">
+        <button class="btn primary big" onclick="toast('正在打包 ${g.cn} 存档…（演示）')">⬇ 立即备份</button>
+        <button class="btn" onclick="toast('还原最近一份备份（演示）')">还原最近</button>
+        <div class="toggle-wrap" onclick="toggleAuto(${g.id})">
+          <div class="switch ${g.auto ? "on" : ""}" id="sw-${g.id}"></div>
+          退出游戏时自动备份
+        </div>
+        <span style="margin-left:auto;font-size:12px;color:var(--text2)">备份存储于：<code style="font-family:Consolas,monospace">E:\\GameBackups\\${g.en}</code></span>
+      </div>
+    </div>`;
+}
+
+function selectGame(id) { selectedId = id; renderList(); renderDetail(); }
+function toggleAuto(id) {
+  const g = games.find(x => x.id === id);
+  g.auto = !g.auto;
+  document.getElementById("sw-" + id).classList.toggle("on", g.auto);
+  toast(g.auto ? "已开启自动备份（游戏退出后 10 秒触发）" : "已关闭自动备份");
+  renderList();
+}
+
+document.getElementById("search").addEventListener("input", e => {
+  keyword = e.target.value.trim().toLowerCase();
+  renderList();
+});
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+  document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+  c.classList.add("active");
+  filter = c.dataset.f;
+  renderList();
+}));
+
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+renderList();
+renderDetail();
+</script>
+</body>
+</html>

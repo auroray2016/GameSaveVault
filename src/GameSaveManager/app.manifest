@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <!-- WPF 在 .NET 8 默认 PerMonitorV2 DPI 感知，无需在此声明 -->
+</assembly>

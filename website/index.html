@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameSaveVault — 游戏存档管理器 · 再也不会丢存档</title>
+<style>
+  :root {
+    --bg: #0E1116;
+    --card: #171B24;
+    --card2: #1D2330;
+    --line: #262D3B;
+    --text: #E8ECF4;
+    --muted: #9AA5B8;
+    --accent: #4F8CFF;
+    --accent2: #7B5CFF;
+    --gold: #F0B429;
+    --ok: #34C77B;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    line-height: 1.7;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── 导航 ── */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(14,17,22,.85); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
+  .logo .box {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+  }
+  nav .links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; color: var(--muted); }
+  nav .links a:hover { color: var(--text); }
+
+  /* ── Hero ── */
+  header { padding: 84px 0 56px; text-align: center; position: relative; overflow: hidden; }
+  header::before {
+    content: ""; position: absolute; inset: -40% -20% auto; height: 130%;
+    background:
+      radial-gradient(600px 300px at 30% 20%, rgba(79,140,255,.16), transparent 70%),
+      radial-gradient(600px 300px at 70% 30%, rgba(123,92,255,.14), transparent 70%);
+    pointer-events: none;
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px; margin-bottom: 22px; background: var(--card);
+  }
+  .hero-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  h1 { font-size: 46px; font-weight: 800; letter-spacing: 1px; position: relative; }
+  h1 .grad {
+    background: linear-gradient(100deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { max-width: 640px; margin: 18px auto 0; color: var(--muted); font-size: 17px; position: relative; }
+  .cta { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; position: relative; }
+  .btn {
+    display: inline-block; padding: 13px 30px; border-radius: 12px;
+    font-size: 15px; font-weight: 600; transition: .18s;
+  }
+  .btn-primary {
+    background: linear-gradient(100deg, var(--accent), var(--accent2)); color: #fff;
+    box-shadow: 0 8px 28px rgba(79,140,255,.35);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 34px rgba(79,140,255,.45); }
+  .btn-ghost { border: 1px solid var(--line); color: var(--text); background: var(--card); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .cta-note { margin-top: 14px; font-size: 13px; color: var(--muted); position: relative; }
+
+  /* ── 截图 ── */
+  .shot { margin: 56px auto 0; max-width: 1040px; position: relative; }
+  .shot .frame {
+    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55);
+    background: var(--card);
+  }
+  .shot .bar {
+    height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 14px;
+    background: var(--card2); border-bottom: 1px solid var(--line);
+  }
+  .shot .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2E3646; }
+  .shot .bar i:nth-child(1) { background: #FF5F57; }
+  .shot .bar i:nth-child(2) { background: #FEBC2E; }
+  .shot .bar i:nth-child(3) { background: #28C840; }
+  .shot img { display: block; width: 100%; }
+
+  /* ── 通用 section ── */
+  section { padding: 72px 0; }
+  .sec-head { text-align: center; margin-bottom: 44px; }
+  .sec-head h2 { font-size: 30px; font-weight: 800; }
+  .sec-head p { color: var(--muted); margin-top: 10px; }
+  .kicker {
+    display: inline-block; font-size: 12px; letter-spacing: 3px;
+    color: var(--accent); margin-bottom: 10px; font-weight: 700;
+  }
+
+  /* ── 功能网格 ── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 26px 24px; transition: .18s;
+  }
+  .card:hover { transform: translateY(-3px); border-color: #35405477; }
+  .card .ic {
+    width: 44px; height: 44px; border-radius: 11px; font-size: 21px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(79,140,255,.12); margin-bottom: 15px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 8px; }
+  .card p { font-size: 14px; color: var(--muted); }
+
+  /* ── 三步流程 ── */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .step {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 28px 24px; position: relative;
+  }
+  .step .num {
+    font-size: 13px; font-weight: 800; color: var(--accent);
+    border: 1px solid rgba(79,140,255,.4); border-radius: 8px;
+    padding: 2px 10px; display: inline-block; margin-bottom: 14px;
+  }
+  .step h3 { font-size: 18px; margin-bottom: 8px; }
+  .step p { font-size: 14px; color: var(--muted); }
+
+  /* ── 隐私条 ── */
+  .privacy {
+    background: linear-gradient(120deg, rgba(79,140,255,.10), rgba(123,92,255,.10));
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 34px 36px; display: flex; gap: 30px; align-items: center; flex-wrap: wrap;
+  }
+  .privacy .big { font-size: 22px; font-weight: 800; flex: 1 1 320px; }
+  .privacy .desc { color: var(--muted); font-size: 14px; flex: 2 1 380px; }
+
+  /* ── 下载 ── */
+  .dl {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 40px; text-align: center;
+  }
+  .dl h2 { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
+  .dl p { color: var(--muted); margin-bottom: 26px; }
+  .dl table { margin: 0 auto 28px; font-size: 13.5px; color: var(--muted); border-collapse: collapse; }
+  .dl td { padding: 4px 14px; }
+  .dl td:first-child { color: var(--text); font-weight: 600; text-align: right; }
+  .dl code {
+    background: var(--card2); border: 1px solid var(--line); border-radius: 6px;
+    padding: 2px 8px; font-size: 12px; word-break: break-all;
+  }
+
+  footer { border-top: 1px solid var(--line); padding: 30px 0 40px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer .links { margin-top: 8px; }
+  footer .links a { color: var(--accent); margin: 0 10px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#"><span class="box">💾</span>GameSaveVault</a>
+    <div class="links">
+      <a href="#features">功能</a>
+      <a href="#how">工作流</a>
+      <a href="#privacy">数据安全</a>
+      <a href="#download">下载</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap">
+  <div class="hero-badge"><span class="dot"></span>v1.0.0-beta · Windows 10 / 11 x64 · 免安装便携版</div>
+  <h1>游戏存档，<span class="grad">再也不会丢</span></h1>
+  <p class="sub">自动发现 Steam 与本地游戏的存档位置，游戏退出自动快照、一键还原历史版本，
+  还可通过 WebDAV 在多台电脑间同步。零后台、免安装，数据 100% 留在本机。</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="#download">免费下载便携版</a>
+    <a class="btn btn-ghost" href="#features">看看它能做什么</a>
+  </div>
+  <div class="cta-note">单文件 exe · 自带 .NET 8 运行时 · 无需安装、无广告、无联网上传</div>
+
+  <div class="shot">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <img src="shots/main-1600.png" alt="GameSaveVault 主界面：左侧游戏列表（封面 / Steam·本地版徽章 / 收藏星标），右侧游戏详情（存档位置、备份记录、立即备份与自动策略）">
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">FEATURES</span>
+      <h2>为一个目的而生：别让存档毁掉几百小时</h2>
+      <p>换电脑、重装系统、游戏更新坏档、手滑覆盖——每一种事故它都替你想好了</p>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="ic">🔍</div><h3>双通道自动扫描</h3>
+        <p>一键扫描 Steam 库清单与任意本地文件夹，自动认领游戏、匹配中文名与封面，还可以从 Steam 官方商店 / SteamTools 手动搜索 AppId 精准认领。</p></div>
+      <div class="card"><div class="ic">⏱️</div><h3>退出自动快照</h3>
+        <p>监控游戏进程，退出瞬间自动完成一次备份；长时间游玩还可开启「运行中定时快照」。每款游戏最多保留 5 份，滚动覆盖不占空间。</p></div>
+      <div class="card"><div class="ic">⏪</div><h3>历史版本一键还原</h3>
+        <p>每次备份都是完整快照。坏档、覆盖、误删，打开时间线选一个时间点，点「还原最近」即可回到过去。</p></div>
+      <div class="card"><div class="ic">☁️</div><h3>WebDAV 云同步</h3>
+        <p>填入坚果云等任意 WebDAV 网盘即可在多台电脑间同步存档，跨设备自动互认身份，云端多余的备份还能一键认领回本地。</p></div>
+      <div class="card"><div class="ic">🀄</div><h3>中文名与封面</h3>
+        <p>内置 Steam 官方商店搜索（优先）与 SteamTools（补充）双数据源，自动抓取中文名、封面图，中文游戏一眼可辨；Steam 缺数据时自动用前缀近似搜索兜底。</p></div>
+      <div class="card"><div class="ic">📁</div><h3>玩家档案 · 多存档位</h3>
+        <p>一个游戏多人玩？建立多个玩家档案分别备份，互不干扰。备份前自动核对文件缺失与占用体积，一切尽在详情页。</p></div>
+      <div class="card"><div class="ic">⭐</div><h3>收藏置顶 · 随心排序</h3>
+        <p>收藏的游戏永远置顶；列表支持「最近添加 / 最近游玩 / 名称」排序，启动过游戏就会记录游玩时间，最近在玩什么一目了然。</p></div>
+      <div class="card"><div class="ic">📦</div><h3>真·便携版</h3>
+        <p>单文件 exe、解压即用，自带运行时、目标机零依赖。放进 U 盘随身带，数据独立存放，与已安装版本互不干扰。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="background:var(--card); border-top:1px solid var(--line); border-bottom:1px solid var(--line);">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">WORKFLOW</span>
+      <h2>三步开始，之后全自动</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="num">STEP 1</span><h3>扫描游戏</h3>
+        <p>点「扫描 Steam」读取你的 Steam 库，或用「扫描文件夹」认领学习版 / 硬盘游戏，勾选确认后自动生成游戏列表。</p></div>
+      <div class="step"><span class="num">STEP 2</span><h3>设置备份策略</h3>
+        <p>每款游戏可单独选择：立即备份、退出时备份、运行中定时快照、自动云存档，想省心就一路默认。</p></div>
+      <div class="step"><span class="num">STEP 3</span><h3>安心游玩</h3>
+        <p>底部状态栏实时显示「监控中 N 款 · 等待游戏退出触发」。游戏一退，快照已就位；哪天需要，一键还原。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="wrap">
+    <div class="privacy">
+      <div class="big">🔒 你的存档只属于你</div>
+      <div class="desc">所有备份默认保存在本机 <b>%APPDATA%\GameSaveVault\backups</b>，不注册、不上传、无任何遥测。
+      只有你主动配置了 WebDAV 云同步时，数据才会流向你自己的网盘账户。开源可查、离线可用。</div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="dl">
+      <h2>下载便携版</h2>
+      <p>解压即用 · 无需安装 · 不捆绑任何运行时</p>
+      <table>
+        <tr><td>文件</td><td><code>GameSaveVault-1.0.0-beta-portable-x64.zip</code></td></tr>
+        <tr><td>大小</td><td><code>62.9 MB</code></td></tr>
+        <tr><td>SHA256</td><td><code>002DF60510426D3DC49B883318C0DA8E13614707B7998DE21AC8EC1A2AE5414F</code></td></tr>
+        <tr><td>系统要求</td><td><code>Windows 10 / 11 · x64 · 自带 .NET 8 运行时</code></td></tr>
+      </table>
+      <a class="btn btn-primary" href="GameSaveVault-1.0.0-beta-portable-x64.zip" download>⬇ 下载 zip（62.9 MB）</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    GameSaveVault — 游戏存档管理器 · © 2026
+    <div class="links"><a href="shots/main-full.png" target="_blank">查看完整截图</a></div>
+  </div>
+</footer>
+
+</body>
+</html>

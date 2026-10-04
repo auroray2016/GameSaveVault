@@ -1,0 +1,88 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===== Color（供 DropShadowEffect / GradientStop 使用） ===== -->
+    <Color x:Key="ShadowColor">#5A4E3C</Color>
+    <!-- 卡片悬停柔光高光：浅色主题白卡上用「暖调暗面」反相，否则白色高光在纯白卡上不可见 -->
+    <Color x:Key="GlowColor">#3A5A4E3C</Color>
+    <Color x:Key="GlowColorMid">#185A4E3C</Color>
+    <Color x:Key="GlowColorFade">#005A4E3C</Color>
+    <Color x:Key="IconPlaceholderStart">#9FCDEC</Color>
+    <Color x:Key="IconPlaceholderEnd">#CDB6EC</Color>
+    <Color x:Key="CoverPlaceholderStart">#EFE8DA</Color>
+    <Color x:Key="CoverPlaceholderEnd">#E2D9C6</Color>
+
+    <!-- ===== 表面层 ===== -->
+    <SolidColorBrush x:Key="Bg" Color="#F3EFE6"/>
+    <SolidColorBrush x:Key="Panel" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Panel2" Color="#F4F0E8"/>
+    <SolidColorBrush x:Key="BorderBrush" Color="#E2DAC9"/>
+    <!-- 列表行内极淡分隔线（比 BorderBrush 弱一档，仅用于行间，不用于分区边框） -->
+    <SolidColorBrush x:Key="RowDivider" Color="#0A000000"/>
+
+    <!-- ===== 文字（暖色调近黑/灰；TextSecondary 白底对比度 ≥5:1） ===== -->
+    <SolidColorBrush x:Key="TextPrimary" Color="#403B31"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#6D6455"/>
+    <SolidColorBrush x:Key="MonoText" Color="#575045"/>
+    <!-- Toast 为深色半透明底，浅色主题须用浅字（与深底对比度 ≥10:1） -->
+    <SolidColorBrush x:Key="ToastText" Color="#F7F2E8"/>
+    <SolidColorBrush x:Key="ToastErrorText" Color="#FF9488"/>
+
+    <!-- ===== 品牌（天蓝主色） ===== -->
+    <SolidColorBrush x:Key="Accent" Color="#5690EE"/>
+    <SolidColorBrush x:Key="AccentHover" Color="#6B9FF5"/>
+    <SolidColorBrush x:Key="AccentPrimary" Color="#5690EE"/>
+    <SolidColorBrush x:Key="AccentSoft" Color="#E6EFFD"/>
+    <SolidColorBrush x:Key="AccentSoftBorder" Color="#A6C6F7"/>
+    <SolidColorBrush x:Key="AccentOnText" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Accent2" Color="#186E82"/>
+    <SolidColorBrush x:Key="Accent2Soft" Color="#DBF0F4"/>
+
+    <!-- ===== 状态（薄荷绿加深保证浅底对比） ===== -->
+    <SolidColorBrush x:Key="Green" Color="#2FA878"/>
+    <SolidColorBrush x:Key="GreenSoft" Color="#DCF2E7"/>
+    <SolidColorBrush x:Key="GreenSoftBorder" Color="#A3D9C1"/>
+    <SolidColorBrush x:Key="OnGreenText" Color="#143528"/>
+    <SolidColorBrush x:Key="Orange" Color="#E7A22E"/>
+    <SolidColorBrush x:Key="GoldLock" Color="#C9942D"/>
+    <SolidColorBrush x:Key="Red" Color="#B53C31"/>
+    <SolidColorBrush x:Key="DangerPrimary" Color="#D8564C"/>
+    <SolidColorBrush x:Key="DangerHover" Color="#E07067"/>
+
+    <!-- ===== 控件派生 ===== -->
+    <SolidColorBrush x:Key="BtnHoverBg" Color="#E9F1FD"/>
+    <SolidColorBrush x:Key="RowHoverOverlay" Color="#0C000000"/>
+    <SolidColorBrush x:Key="ItemSelectedBg" Color="#E6EFFD"/>
+    <SolidColorBrush x:Key="CardSelectedBg" Color="#EBF2FD"/>
+    <SolidColorBrush x:Key="ScrollThumb" Color="#D6CEBE"/>
+    <SolidColorBrush x:Key="SwitchTrackOff" Color="#DBD4C4"/>
+    <SolidColorBrush x:Key="ToggleHoverBorder" Color="#BCB3A2"/>
+    <SolidColorBrush x:Key="StarInactive" Color="#C9C1B1"/>
+    <SolidColorBrush x:Key="IconRing" Color="#1F000000"/>
+    <SolidColorBrush x:Key="OnPrimaryOverlay" Color="#38FFFFFF"/>
+    <SolidColorBrush x:Key="OnPrimaryTextMuted" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="KindFullBg" Color="#EAE4D6"/>
+    <SolidColorBrush x:Key="ToastBg" Color="#F038332B"/>
+
+    <!-- ===== 行状态（云端 / 孤儿备份） ===== -->
+    <SolidColorBrush x:Key="RowHoverBg" Color="#ECF2FC"/>
+    <SolidColorBrush x:Key="RowSelectedBg" Color="#E0EBFC"/>
+    <SolidColorBrush x:Key="RowSelectedHoverBg" Color="#D3E2FA"/>
+
+    <!-- ===== 标签页 / 云端局部 ===== -->
+    <SolidColorBrush x:Key="TabBg" Color="#ECE6D9"/>
+    <SolidColorBrush x:Key="TabHoverBg" Color="#E2DBCB"/>
+    <SolidColorBrush x:Key="TabActiveBg" Color="#D3C9B6"/>
+    <SolidColorBrush x:Key="CloudBorder" Color="#E2DAC8"/>
+    <SolidColorBrush x:Key="CloudTagBg" Color="#EFE9DC"/>
+
+    <!-- ===== 徽章 ===== -->
+    <SolidColorBrush x:Key="BadgeLocalBg" Color="#26E7A22E"/>
+    <SolidColorBrush x:Key="BadgeLocalBorder" Color="#66E7A22E"/>
+    <SolidColorBrush x:Key="BadgeSteamBg" Color="#265690EE"/>
+    <SolidColorBrush x:Key="BadgeSteamBorder" Color="#665690EE"/>
+    <SolidColorBrush x:Key="SteamText" Color="#2968B2"/>
+    <SolidColorBrush x:Key="BuiltInTagBg" Color="#E0ECFC"/>
+    <SolidColorBrush x:Key="BuiltInTagText" Color="#2664B2"/>
+
+</ResourceDictionary>

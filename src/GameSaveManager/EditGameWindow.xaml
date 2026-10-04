@@ -1,0 +1,181 @@
+<Window x:Class="GameSaveManager.EditGameWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="编辑游戏信息"
+        Width="560" SizeToContent="Height" MaxHeight="700"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{DynamicResource Panel}"
+        FontFamily="Microsoft YaHei UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+    <StackPanel Margin="24,20,24,20">
+
+        <TextBlock Text="基本信息" FontSize="14" FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+        <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1" CornerRadius="10" Padding="16,12" Margin="0,6,0,0">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Steam AppId" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <TextBox x:Name="AppIdBox" Grid.Column="1" Width="110" Height="30" FontSize="13" Padding="8,0"
+                             VerticalContentAlignment="Center" TextAlignment="Center"
+                             Background="{DynamicResource Panel2}" Foreground="{DynamicResource TextPrimary}"
+                             CaretBrush="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                        <TextBox.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </TextBox.Resources>
+                    </TextBox>
+                    <Button Grid.Column="2" Style="{StaticResource BtnSm}" Content="🔍 查询" Margin="6,0,0,0"
+                            VerticalAlignment="Center" Click="OnSearchAppId"
+                            ToolTip="按英文名称查 PCGamingWiki 反查 AppId"/>
+                    <TextBlock Grid.Column="3" Text="0 = 未匹配 · 用于封面与 Wiki" FontSize="11"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"
+                               Margin="10,0,0,0" TextTrimming="CharacterEllipsis"
+                               ToolTip="0 表示未匹配；AppId 用于获取游戏封面、中文名及 PCGamingWiki 存档规则"/>
+                </Grid>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="中文名称" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <TextBox x:Name="NameCnBox" Grid.Column="1" Height="30" FontSize="13" Padding="8,0"
+                             VerticalContentAlignment="Center"
+                             Background="{DynamicResource Panel2}" Foreground="{DynamicResource TextPrimary}"
+                             CaretBrush="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                        <TextBox.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </TextBox.Resources>
+                    </TextBox>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center">
+                        <Button x:Name="BtnSyncCn" Style="{StaticResource BtnSm}" Content="同步中文名"
+                                Click="OnSyncChineseName"
+                                ToolTip="获取正式中文名：本地库 → 小黑盒（国内直连） → Steam（需加速器）"/>
+                        <Button x:Name="BtnSyncSrc" Style="{StaticResource BtnSm}" Content="▾" Padding="6,0" Margin="2,0,0,0"
+                                Click="OnSyncSourceMenu" ToolTip="选择数据源"/>
+                    </StackPanel>
+                </Grid>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="英文名称" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <TextBox x:Name="NameEnBox" Grid.Column="1" Height="30" FontSize="13" Padding="8,0"
+                             VerticalContentAlignment="Center"
+                             Background="{DynamicResource Panel2}" Foreground="{DynamicResource TextPrimary}"
+                             CaretBrush="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                        <TextBox.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </TextBox.Resources>
+                    </TextBox>
+                </Grid>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="游戏 exe" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <Border Grid.Column="1" Background="{DynamicResource Panel2}" CornerRadius="6"
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="8,4" Margin="0,0,8,0">
+                        <TextBlock x:Name="ExeText" FontFamily="Consolas" FontSize="11.5"
+                                   Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </Border>
+                    <Button Grid.Column="2" Style="{StaticResource BtnSm}" Content="浏览…"
+                            VerticalAlignment="Center" Click="OnBrowseExe"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="图片" FontSize="14" FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimary}" Margin="0,18,0,4"/>
+        <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1" CornerRadius="10" Padding="16,12" Margin="0,6,0,0">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="封面图" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <Border Grid.Column="1" Width="92" Height="43" CornerRadius="6"
+                            Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1" ClipToBounds="True">
+                        <Grid>
+                            <Image x:Name="CoverPreview" Stretch="UniformToFill"/>
+                            <TextBlock x:Name="CoverEmpty" Text="无封面" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+                    <Button Grid.Column="3" Style="{StaticResource BtnSm}" Content="从 Steam 下载" Margin="0,0,8,0"
+                            VerticalAlignment="Center" Click="OnDownloadCover"
+                            ToolTip="按上方 AppId 从 Steam CDN 下载封面（国内可用）"/>
+                    <Button Grid.Column="4" Style="{StaticResource BtnSm}" Content="浏览…" VerticalAlignment="Center"
+                            Click="OnBrowseCover"/>
+                </Grid>
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="86"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="图标" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <Border Grid.Column="1" Width="40" Height="40" CornerRadius="8"
+                            Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1" ClipToBounds="True">
+                        <Grid>
+                            <Image x:Name="IconPreview" Stretch="UniformToFill"/>
+                            <TextBlock x:Name="IconEmpty" Text="无" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+                    <Button Grid.Column="3" Style="{StaticResource BtnSm}" Content="浏览…（可选 exe 提取）" VerticalAlignment="Center"
+                            Click="OnBrowseIcon"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Margin="0,20,0,0">
+            <TextBlock x:Name="ErrText" Foreground="{DynamicResource Red}" FontSize="12"
+                       Visibility="Collapsed" TextWrapping="Wrap" Margin="0,0,0,10"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource Btn}" Content="取消" Width="80" IsCancel="True"/>
+                <Button Style="{StaticResource BtnPrimary}" Content="保存" Width="80" x:Name="BtnSave"
+                        Margin="10,0,0,0" Click="OnSave" IsDefault="True"/>
+            </StackPanel>
+        </StackPanel>
+    </StackPanel>
+</Window>

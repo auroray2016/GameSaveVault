@@ -1,0 +1,181 @@
+<Application x:Class="GameSaveManager.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:GameSaveManager"
+             StartupUri="MainWindow.xaml"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- 活动主题字典：启动早期由 ThemeManager 按 settings.json 替换；
+                 默认 Dark 仅为设计期/首帧提供安全回退。 -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Dark.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <local:BoolToVis x:Key="BoolToVis"/>
+            <local:NullToVis x:Key="NullToVis"/>
+
+            <!-- 通用按钮（MainWindow / SettingsWindow 共用） -->
+            <Style x:Key="Btn" TargetType="Button">
+                <Setter Property="Background" Value="{DynamicResource Panel2}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="14,6"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource BtnHoverBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="BtnPrimary" TargetType="Button" BasedOn="{StaticResource Btn}">
+                <Setter Property="Background" Value="{DynamicResource AccentPrimary}"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentOnText}"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentHover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="BtnSm" TargetType="Button" BasedOn="{StaticResource Btn}">
+                <Setter Property="Padding" Value="10,3"/>
+                <Setter Property="FontSize" Value="11.5"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            </Style>
+
+            <!-- 危险/中断操作按钮（实心）：更新数据库的「停止更新」等需要一眼锁定的场景 -->
+            <Style x:Key="BtnDanger" TargetType="Button" BasedOn="{StaticResource Btn}">
+                <Setter Property="Background" Value="{DynamicResource DangerPrimary}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource DangerHover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 原位开关按钮：位置不动，填充色表示开启 -->
+            <Style x:Key="ToggleBtn" TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+                <Setter Property="FontSize" Value="12.5"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CheckBox">
+                            <Border x:Name="bd" CornerRadius="8" Padding="13,6"
+                                    Background="{DynamicResource Panel2}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource ToggleHoverBorder}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <!-- 开启：绿色填充 + 深色文字，与「自动」徽章语义一致 -->
+                                    <Setter Property="Foreground" Value="{DynamicResource OnGreenText}"/>
+                                    <Setter Property="FontWeight" Value="Bold"/>
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource Green}"/>
+                                    <Setter TargetName="bd" Property="BorderThickness" Value="0"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 开关 -->
+            <Style x:Key="Switch" TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+                <Setter Property="FontSize" Value="12.5"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CheckBox">
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="track" Width="40" Height="22" CornerRadius="11"
+                                        Background="{DynamicResource SwitchTrackOff}" VerticalAlignment="Center">
+                                    <Ellipse x:Name="knob" Width="16" Height="16" Fill="White"
+                                             HorizontalAlignment="Left" Margin="3,0,0,0"/>
+                                </Border>
+                                <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="track" Property="Background" Value="{DynamicResource Green}"/>
+                                    <Setter TargetName="knob" Property="HorizontalAlignment" Value="Right"/>
+                                    <Setter TargetName="knob" Property="Margin" Value="0,0,3,0"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

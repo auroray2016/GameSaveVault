@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形底 -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bg)"/>
+
+  <!-- 装饰光斑 -->
+  <circle cx="212" cy="38" r="62" fill="#FFFFFF" opacity="0.08"/>
+  <circle cx="34" cy="232" r="72" fill="#FFFFFF" opacity="0.07"/>
+  <ellipse cx="128" cy="66" rx="92" ry="26" fill="#FFFFFF" opacity="0.10"/>
+
+  <!-- 白色手柄：机身 + 两侧握把（同色叠加自然融合）；整体上移 7px 视觉居中 -->
+  <g transform="translate(0,-7)" fill="#FFFFFF">
+    <rect x="42" y="90" width="172" height="68" rx="32"/>
+    <circle cx="66" cy="153" r="35"/>
+    <circle cx="190" cy="153" r="35"/>
+  </g>
+
+  <!-- 按键：蓝紫色，与底色呼应 -->
+  <g transform="translate(0,-7)" fill="#6356E5">
+    <!-- 十字键 -->
+    <rect x="84.0" y="111" width="8" height="26" rx="3.5"/>
+    <rect x="75.0" y="120" width="26" height="8" rx="3.5"/>
+    <!-- ABXY 四圆点 -->
+    <circle cx="168" cy="112.5" r="5"/>
+    <circle cx="168" cy="136.5" r="5"/>
+    <circle cx="156" cy="124.5" r="5"/>
+    <circle cx="180" cy="124.5" r="5"/>
+    <!-- 中央 guide 键 -->
+    <circle cx="128" cy="115" r="6.5"/>
+  </g>
+</svg>
