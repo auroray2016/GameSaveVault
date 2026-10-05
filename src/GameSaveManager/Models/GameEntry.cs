@@ -31,7 +31,7 @@ public class GameEntry : INotifyPropertyChanged
     public List<PlaySession> Sessions { get; set; } = new();
 
     private bool _isRunning;
-    /// <summary>运行时状态：游戏进程当前存活（WatchTick 每 3 秒刷新，不持久化）。卡片显示「游玩中」。</summary>
+    /// <summary>运行时状态：游戏进程当前存活（WatchTick 每 1 秒刷新，不持久化）。卡片显示「游玩中」。</summary>
     [JsonIgnore]
     public bool IsRunning
     {
@@ -107,10 +107,22 @@ public class GameEntry : INotifyPropertyChanged
     /// <summary>玩家卡槽名单（持久化，创建顺序）。卡槽是独立实体：即使名下备份被全部删除，
     /// 玩家仍保留在列表里，只能通过右键卡槽「删除玩家」移除。旧数据启动时由 BackfillPlayers 回填。</summary>
     public List<string> Players { get; set; } = new();
-    /// <summary>还原标记：玩家名 → 最近一次手动还原所到备份的「游戏内存档时间」（本地时间）。
-    /// 当 live 存档时间与最新备份时间相等时，据此区分「存档已还原」与「存档备份一致」；
-    /// 该玩家产生新备份后自动移除。玩家切换（SwitchTo）不写此标记。</summary>
+    /// <summary>[已退役] 旧版还原标记（玩家→手动还原所到的存档时间），仅保留用于反序列化与一次性迁移；
+    /// 启动迁移 BackfillFavorite 后清空，新逻辑一律以 SwitchAnchors（心目中的存档指针）+ FavoriteWhy 为准。</summary>
     public Dictionary<string, DateTime> RestoredMarks { get; set; } = new();
+
+    /// <summary>心目中的存档指针：玩家名 → 她认可的那份备份的 FileJson（相对口径）。
+    /// 由"认可动作"移动：手动还原→还原目标；手动备份（含热键/热备份）→新包；
+    /// 退出游戏自动备份→新包（运行中热快照不移动）；切走玩家→锚定包；首位玩家建卡→初始包。
+    /// 筹码 live 核对以指针包的存档时间为基准；切回她时还原指针包；Prune 自动淘汰跳过指针包。
+    /// 指针包丢失/损坏时解析端回退她最新的可还原包。玩家改名/删除时同步维护。
+    /// 历史命名 SwitchAnchors：属性/JSON 键名保持不变以兼容存量 games.json。</summary>
+    public Dictionary<string, string> SwitchAnchors { get; set; } = new();
+
+    /// <summary>指针移动原因，与 SwitchAnchors 同键：restore=手动还原；manual=手动备份（含热键/热备份）；
+    /// auto=退出游戏自动备份；switch=切走/新建玩家时锚定；init=首位玩家初始承接；""=启动迁移兜底。
+    /// 决定 live 与指针包一致时筹码的文案（已还原到 / 已备份·手动 / 已备份·自动）。</summary>
+    public Dictionary<string, string> FavoriteWhy { get; set; } = new();
     public List<string> ProfilePaths { get; set; } = new();  // 旧版手动勾选目录（已废弃，保留仅为反序列化兼容；现全自动按存档位置识别）
     [JsonIgnore]
     public ObservableCollection<ProfileSlotVm> ProfileSlots { get; set; } = new();
@@ -501,6 +513,25 @@ public class BackupRecord : INotifyPropertyChanged
         set { if (_cloudDeleted != value) { _cloudDeleted = value; OnPropertyChanged(nameof(CloudDeleted)); } }
     }
 
+    private bool _isNewerThanLive;
+    /// <summary>运行时标记：这份备份的存档时间新于当前 live（还原到旧档后，更新的备份行在锁前挂橙色感叹号）。
+    /// 不持久化，由主窗口每次 live 核对后按 SavedAt 与 live 最新存档时间比较回填。</summary>
+    [JsonIgnore]
+    public bool IsNewerThanLive
+    {
+        get => _isNewerThanLive;
+        set { if (_isNewerThanLive != value) { _isNewerThanLive = value; OnPropertyChanged(nameof(IsNewerThanLive)); } }
+    }
+
+    private string _newerThanLiveTip = "";
+    /// <summary>感叹号悬停说明（该备份存档时间 / 当前存档时间 / 新于当前提醒）；空串=无标记。</summary>
+    [JsonIgnore]
+    public string NewerThanLiveTip
+    {
+        get => _newerThanLiveTip;
+        set { if (_newerThanLiveTip != value) { _newerThanLiveTip = value; OnPropertyChanged(nameof(NewerThanLiveTip)); } }
+    }
+
     [JsonIgnore]
     public bool IsIncr => Kind == "incr";
     [JsonIgnore]
@@ -589,7 +620,7 @@ public class ProfileSlotVm : INotifyPropertyChanged
     }
 
     private string _statusAction = "";
-    /// <summary>状态行点击动作："" 不可点；restoreLocal=直接还原本机最新备份；restoreCloud=下载云端最新并还原。</summary>
+    /// <summary>状态行点击动作："" 不可点；restoreFavorite=还原她心目中的指针包；restoreCloud=下载云端最新并还原。</summary>
     public string StatusAction
     {
         get => _statusAction;
@@ -604,6 +635,37 @@ public class ProfileSlotVm : INotifyPropertyChanged
         }
     }
 
+    private string _restoredTagText = "";
+    /// <summary>主状态行下方的次要事实标记：最近一次手动还原所到的存档时间（如「↩ 已还原到 10-01 15:26」）。
+    /// 与主状态并列展示——还旧档后主状态是可点的「本地有较新备份」，此标记保留「刚还原过」的痕迹。空串隐藏。</summary>
+    public string RestoredTagText
+    {
+        get => _restoredTagText;
+        private set
+        {
+            if (_restoredTagText != value)
+            {
+                _restoredTagText = value;
+                OnPropertyChanged(nameof(RestoredTagText));
+            }
+        }
+    }
+
+    private string _restoredTagTip = "";
+    /// <summary>还原次要标记的悬停说明。</summary>
+    public string RestoredTagTip
+    {
+        get => _restoredTagTip;
+        private set
+        {
+            if (_restoredTagTip != value)
+            {
+                _restoredTagTip = value;
+                OnPropertyChanged(nameof(RestoredTagTip));
+            }
+        }
+    }
+
     /// <summary>状态行是否可点（XAML 据此放手型/下划线/开放命中）。</summary>
     public bool StatusClickable => !string.IsNullOrEmpty(_statusAction);
 
@@ -614,6 +676,13 @@ public class ProfileSlotVm : INotifyPropertyChanged
         StatusKind = kind;
         StatusTip = tip;
         StatusAction = action;
+    }
+
+    /// <summary>设置主状态行下方的「已还原到 X」次要事实标记（空串=清除）。</summary>
+    public void SetRestoredTag(string text, string tip = "")
+    {
+        RestoredTagText = text;
+        RestoredTagTip = tip;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -277,17 +277,16 @@ public static class ProfileService
         if (virtualState)
         {
             // 首位显式玩家承接虚拟玩家1：先认领旧通用备份（这样零变化检查才有基准），
-            // 再把当前进度打包归他；无存档/无变化则不产生 zip
+            // 再把当前进度打包归他并立为心目中的档；无存档/无变化则不产生 zip（无变化时指针落认领来的最新包）
             try { BackupService.AdoptBackupsForPlayer(g, name); } catch { }
-            try { BackupService.Create(g, "初始备份", hot: false, out _, profile: name); }
+            try { BackupAsFavorite(g, "初始备份", hot: false, "init", out _, profile: name); }
             catch (InvalidOperationException ex)
                 when (ex.Message.Contains("没有变化") || ex.Message.Contains("尚未产生存档")) { }
         }
         else if (!string.IsNullOrEmpty(g.ActiveProfile))
         {
-            // 常规：先把当前玩家进度打包保住（没有变化→进度已在最新 zip）
-            try { BackupService.Create(g, "切换玩家"); }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化")) { }
+            // 常规：先把当前玩家进度保住（等同切走：live 命中已有备份则只移指针不打重复 zip）
+            AnchorOnLeave(g, g.ActiveProfile);
         }
 
         RegisterSlot(g, name);
@@ -304,7 +303,7 @@ public static class ProfileService
         if (!ListSlots(g).Contains(name))
             throw new InvalidOperationException($"玩家「{name}」不存在");
 
-        // 1) 当前进度打包给当前玩家（没有变化→跳过；真实失败→中止，live 保持原样）
+        // 1) 离开当前玩家：给她的 live 落切换锚点（zip 唯一事实源；打包失败绝不动 live，进度不丢）
         if (!string.IsNullOrEmpty(g.ActiveProfile))
         {
             // 零备份玩家：她若没玩过（live 与切入时恢复的基线一致），不打包——
@@ -312,29 +311,124 @@ public static class ProfileService
             bool leavingZeroBackup = !g.Backups.Any(b => b.Profile == g.ActiveProfile);
             bool skipAsUntouched = leavingZeroBackup && BackupService.LiveMatchesBaseline(g);
             if (!skipAsUntouched)
-            {
-                try { BackupService.Create(g, "切换玩家"); }
-                catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化")) { }
-            }
+                AnchorOnLeave(g, g.ActiveProfile);
         }
 
-        // 2) 目标玩家最新一份"链路完整"的备份覆盖 live（Restore 内部有"还原前安全快照"兜底）。
+        // 2) 目标玩家的锚点包覆盖 live（无锚点/锚点失效→最新一份链路完整的备份；
+        //    Restore 内部有"还原前安全快照"兜底）。
         //    云端增量包已下载、全量基础包还没到齐时跳过它选更早的完整备份，而不是让还原炸链。
         //    落盘路径重映射到本机当前存档目录：本机 zip 的 manifest.Paths 本就是本机路径，
         //    云端下载的 zip 记的是源机路径，必须落到本机目录才能生效。
-        var target = g.Backups.Where(b => (b.Profile ?? "") == name)
-            .OrderByDescending(b => b.Time)
-            .FirstOrDefault(b => BackupService.IsRestorable(g, b));
+        var target = PickSwitchTarget(g, name);
         if (target == null)
             throw new InvalidOperationException(
                 $"玩家「{name}」名下还没有可还原的完整备份（云端基础包可能尚未下载完成，请稍后再试）");
-        BackupService.Restore(g, target, purgeNewFiles: true, targetPaths: EffectivePaths(g));
+        // safetySnapshot=false：切走方的 live 已在上面 AnchorOnLeave 锚定，
+        // Restore 内再打安全快照只会制造内容重复的冗余 zip（锚点命中时尤甚）
+        BackupService.Restore(g, target, purgeNewFiles: true,
+            targetPaths: EffectivePaths(g), safetySnapshot: false, markFavorite: false);
 
         g.ActiveProfile = name;
-        // 切换不是"还原"：移除 Restore 内刚落的标记，切入后筹码显示「存档备份一致」
-        g.RestoredMarks?.Remove(name);
+        // 切换不产生新的"认可动作"：Restore 已按 markFavorite:false 调用，切入后指针保持目标玩家原值
         WriteGameMarker(g);
         Store.Save();
+    }
+
+    /// <summary>以"认可动作"名义备份：成功→心目中的指针移到新包；报「没有变化」→ live 未变，
+    /// 指针已在承载这份 live 的包上时什么都不改（保留她原来的认可原因，例如刚手动备份后退出游戏
+    /// 无变化，不该被改写成 auto）；指针缺失或指向别处时才兜底移到最新可还原包；随后原异常照常抛出。
+    /// why：manual=手动备份/热键，auto=退出自动备份，init=首位玩家初始承接。</summary>
+    public static BackupRecord BackupAsFavorite(GameEntry g, string note, bool hot, string why,
+        out int skippedFiles, string? profile = null)
+    {
+        string player = profile ?? g.ActiveProfile ?? "";
+        try
+        {
+            var rec = BackupService.Create(g, note, hot, out skippedFiles, profile: profile);
+            MarkFavorite(g, rec.Profile ?? player, rec.FileJson, why);
+            return rec;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
+        {
+            skippedFiles = 0;
+            var latest = g.Backups
+                .Where(b => (b.Profile ?? "") == player)
+                .OrderByDescending(b => b.Time)
+                .FirstOrDefault(b => BackupService.IsRestorable(g, b));
+            if (latest != null)
+            {
+                string? curFav = g.SwitchAnchors != null
+                    && g.SwitchAnchors.TryGetValue(player, out var cf) ? cf : null;
+                bool alreadyHere = !string.IsNullOrEmpty(curFav)
+                    && string.Equals(BackupRecord.ResolveFile(curFav!),
+                                     BackupRecord.ResolveFile(latest.FileJson),
+                                     StringComparison.OrdinalIgnoreCase);
+                // 指针已落在这份包上：无新认可动作，保留原 why；悬空/指别处才兜底落指针
+                if (!alreadyHere) MarkFavorite(g, player, latest.FileJson, why);
+            }
+            throw;
+        }
+    }
+
+    /// <summary>切走玩家时把她的当前 live 锚定到一份备份（= 移动她的心目中指针，why=switch）：
+    /// live 与名下某份已有备份内容完全一致（刚手动还原旧档的典型场景）→ 只记指针、不打内容重复的 zip；
+    /// 否则打一份「切换玩家」新备份并指向它；报「没有变化」→ 指向她最新的可还原包（与旧回退口径一致）。</summary>
+    public static void AnchorOnLeave(GameEntry g, string leaving)
+    {
+        var matched = BackupService.FindSnapshotMatchingLive(g, leaving);
+        if (matched != null)
+        {
+            MarkFavorite(g, leaving, matched.FileJson, "switch");
+            return;
+        }
+        try
+        {
+            var rec = BackupService.Create(g, "切换玩家");
+            MarkFavorite(g, leaving, rec.FileJson, "switch");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
+        {
+            var latest = g.Backups
+                .Where(b => (b.Profile ?? "") == leaving)
+                .OrderByDescending(b => b.Time)
+                .FirstOrDefault(b => BackupService.IsRestorable(g, b));
+            if (latest != null) MarkFavorite(g, leaving, latest.FileJson, "switch");
+        }
+    }
+
+    /// <summary>解析玩家当前"心目中的存档"：指针在库且链路完整→它；指针缺失/指向的包被删或损坏
+    /// →回退她最新的可还原完整包（why 输出 fallback，文案不再按还原/备份口径细分）；
+    /// 一份都没有→null。切回玩家与筹码 live 核对共用此解析。</summary>
+    public static BackupRecord? ResolveFavorite(GameEntry g, string name, out string why)
+    {
+        name ??= "";
+        why = g.FavoriteWhy?.TryGetValue(name, out var w) == true ? w : "";
+        var mine = g.Backups.Where(b => (b.Profile ?? "") == name).ToList();
+        if (g.SwitchAnchors != null
+            && g.SwitchAnchors.TryGetValue(name, out var favFile)
+            && !string.IsNullOrEmpty(favFile))
+        {
+            var fav = mine.FirstOrDefault(b =>
+                string.Equals(b.FileJson, favFile, StringComparison.OrdinalIgnoreCase));
+            if (fav != null && BackupService.IsRestorable(g, fav)) return fav;
+        }
+        var latest = mine.OrderByDescending(b => b.Time).FirstOrDefault(b => BackupService.IsRestorable(g, b));
+        if (latest != null && string.IsNullOrEmpty(why)) why = "fallback";
+        return latest;
+    }
+
+    /// <summary>选切入玩家要还原的备份 = 她当前心目中的存档（指针优先，失效回退最新可还原包）。</summary>
+    private static BackupRecord? PickSwitchTarget(GameEntry g, string name)
+        => ResolveFavorite(g, name, out _);
+
+    /// <summary>移动"心目中的存档"指针：记录玩家认可的备份（FileJson 相对口径）与认可原因。</summary>
+    public static void MarkFavorite(GameEntry g, string player, string fileJson, string why)
+    {
+        player ??= "";
+        g.SwitchAnchors ??= new Dictionary<string, string>(StringComparer.Ordinal);
+        g.SwitchAnchors[player] = fileJson;
+        g.FavoriteWhy ??= new Dictionary<string, string>(StringComparer.Ordinal);
+        g.FavoriteWhy[player] = why ?? "";
     }
 
     /// <summary>重命名玩家：改卡槽名单、备份归属与玩家备份子目录、同步激活态。</summary>
@@ -365,6 +459,22 @@ public static class ProfileService
             if (idx >= 0) g.Players[idx] = newName;
         }
         if (g.ActiveProfile == oldName) g.ActiveProfile = newName;
+        // 心目中的指针随玩家改名：备份目录已移动，按 zip 文件名把指针值重映射到新记录；原因随之搬运
+        if (g.SwitchAnchors != null && g.SwitchAnchors.TryGetValue(oldName, out var anchorRel))
+        {
+            g.SwitchAnchors.Remove(oldName);
+            string why = g.FavoriteWhy?.TryGetValue(oldName, out var w) == true ? w : "";
+            g.FavoriteWhy?.Remove(oldName);
+            string leaf = Path.GetFileName(anchorRel);
+            var remapped = g.Backups
+                .Where(b => (b.Profile ?? "") == newName)
+                .FirstOrDefault(b => string.Equals(Path.GetFileName(b.FileJson), leaf, StringComparison.OrdinalIgnoreCase));
+            if (remapped != null) MarkFavorite(g, newName, remapped.FileJson, why);
+        }
+        else
+        {
+            g.FavoriteWhy?.Remove(oldName);
+        }
         WriteGameMarker(g);
         Store.Save();
     }
@@ -379,6 +489,8 @@ public static class ProfileService
                 $"「{DefaultFirstPlayerName}」是默认玩家，不能删除；可右键玩家名字改名，或点「＋ 新玩家」后切换");
         int backups = BackupService.DeletePlayerBackups(g, name);
         g.Players?.RemoveAll(n => string.Equals(n, name, StringComparison.Ordinal));
+        g.SwitchAnchors?.Remove(name);
+        g.FavoriteWhy?.Remove(name);
         if (g.ActiveProfile == name) g.ActiveProfile = "";
         // 还有其他真实玩家：刷新激活标记；删光了：游戏回到虚拟玩家1态——清掉 marker，
         // 磁盘不留空标记（RootFor 下若有镜像等其他内容则保留目录、只删 game.json）
@@ -457,6 +569,77 @@ public static class ProfileService
                     .ToList();
                 if (cleaned.Count != g.Players.Count) g.Players = cleaned;
                 if (g.Players.Count != before) dirty = true;
+            }
+            catch { }
+        }
+        if (dirty) Store.Save();
+    }
+
+    /// <summary>启动迁移：为每个玩家建立"心目中的存档"指针，并清空已退役的 RestoredMarks（幂等）。
+    /// · 指针已有效（在库、链路完整）→ 保留；缺原因登记则补 ""（不覆盖已知原因）；
+    /// · 有旧版还原标记：在她现存可还原备份中找存档时间 ±2 秒内、打包最新的一份 → 原因 restore；
+    ///   找不到不建指针（旧档包已不在，绝不用最新包冒充她的选择）；
+    /// · 无标记且无有效指针：指针=最新可还原包、原因 ""（纯兜底，让筹码立刻有比较基准）。
+    /// 共用存档（玩家名 ""）同样处理；全部处理完清空该游戏的 RestoredMarks。</summary>
+    public static void BackfillFavorite()
+    {
+        bool dirty = false;
+        foreach (var g in Store.Games)
+        {
+            try
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var n in g.Players ?? new List<string>())
+                    if (!string.IsNullOrEmpty(n)) names.Add(n);
+                foreach (var b in g.Backups) names.Add(b.Profile ?? "");
+                if (!string.IsNullOrEmpty(g.ActiveProfile)) names.Add(g.ActiveProfile);
+                if (g.RestoredMarks != null)
+                    foreach (var k in g.RestoredMarks.Keys) names.Add(k ?? "");
+
+                foreach (var name in names)
+                {
+                    var mine = g.Backups.Where(b => (b.Profile ?? "") == name).ToList();
+                    bool validPointer = g.SwitchAnchors != null
+                        && g.SwitchAnchors.TryGetValue(name, out var ptr)
+                        && !string.IsNullOrEmpty(ptr)
+                        && mine.Any(b => string.Equals(b.FileJson, ptr, StringComparison.OrdinalIgnoreCase)
+                                        && BackupService.IsRestorable(g, b));
+                    if (validPointer)
+                    {
+                        if (g.FavoriteWhy == null || !g.FavoriteWhy.ContainsKey(name))
+                        {
+                            g.FavoriteWhy ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                            g.FavoriteWhy[name] = "";   // 上一版本写入的锚点：原因未知，按"备份一致"口径展示
+                            dirty = true;
+                        }
+                    }
+                    else if (g.RestoredMarks != null
+                             && g.RestoredMarks.TryGetValue(name, out var restoredAt)
+                             && restoredAt != default)
+                    {
+                        long target = restoredAt.ToUniversalTime().Ticks;
+                        var hit = mine.Where(b => BackupService.IsRestorable(g, b)
+                                                  && b.SavedAt != DateTime.MinValue)
+                            .Where(b => Math.Abs(b.SavedAt.ToUniversalTime().Ticks - target)
+                                        <= BackupService.LiveTimeToleranceTicks)
+                            .OrderByDescending(b => b.Time)
+                            .FirstOrDefault();
+                        if (hit != null) { MarkFavorite(g, name, hit.FileJson, "restore"); dirty = true; }
+                        else { g.SwitchAnchors?.Remove(name); g.FavoriteWhy?.Remove(name); }
+                    }
+                    else
+                    {
+                        var latest = mine.OrderByDescending(b => b.Time)
+                            .FirstOrDefault(b => BackupService.IsRestorable(g, b));
+                        if (latest != null) { MarkFavorite(g, name, latest.FileJson, ""); dirty = true; }
+                    }
+                }
+
+                if (g.RestoredMarks != null && g.RestoredMarks.Count > 0)
+                {
+                    g.RestoredMarks.Clear();
+                    dirty = true;
+                }
             }
             catch { }
         }

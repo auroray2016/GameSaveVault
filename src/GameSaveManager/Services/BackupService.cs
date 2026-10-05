@@ -501,8 +501,6 @@ public static class BackupService
         });
         // 有归属玩家的备份：落激活标记（幂等；此时玩家有真实 zip，建目录写 game.json 合理）
         if (profileKey.Length > 0) ProfileService.WriteGameMarker(g);
-        // 新备份产生：还原标记解除（live 已被新备份覆盖，状态从「存档已还原」变「存档备份一致」）
-        g.RestoredMarks?.Remove(profileKey);
         // 备份内容 == 当前 live：基线刷新为备份后状态，后续零备份玩家比较才不会用过时基线
         SetLiveBaseline(g);
         Store.Save();
@@ -706,8 +704,12 @@ public static class BackupService
     /// 配置/截图等不参与切换的目录不落盘。
     /// null = 按 manifest.Paths 原路径还原（直接点备份行还原的常态）。
     /// 无论哪种映射，条目会落成根目录同名自嵌套时一律在写盘前中止。</param>
+    /// <param name="safetySnapshot">还原前是否给当前 live 打「还原前安全快照」（默认 true）。
+    /// 玩家切换（SwitchTo）传 false：切走方的 live 已由 AnchorOnLeave 精确锚定——
+    /// 命中已有备份时再打快照必然是内容重复的冗余 zip（卡赞 01:25 事故包的真正来源），
+    /// 未命中时锚点包本身就是刚打好的「切换玩家」新包，同样不需要重复兜底。</param>
     public static void Restore(GameEntry g, BackupRecord r, bool purgeNewFiles = false,
-        IReadOnlyList<string>? targetPaths = null)
+        IReadOnlyList<string>? targetPaths = null, bool safetySnapshot = true, bool markFavorite = true)
     {
         using var __zone = EnterGameZone(g.Id);
         if (!File.Exists(r.File))
@@ -718,11 +720,12 @@ public static class BackupService
         // 只忽略"没有变化/没有可备份目录"；磁盘满、IO 错误等真实失败必须中止还原——
         // 否则唯一的后悔药没建成，随后的覆盖与严格清理将无法回退。
         // 零备份的激活玩家若根本没玩过（live 与切入基线一致）：不打快照——
-        // 否则会把上一任的进度错误归到她名下
+        // 否则会把上一任的进度错误归到她名下。
+        // 玩家切换时整段跳过：切走方已在 SwitchTo/AnchorOnLeave 锚定，安全快照只会打出冗余包。
         bool activePlayerZero = !string.IsNullOrEmpty(g.ActiveProfile)
             && !g.Backups.Any(b => b.Profile == g.ActiveProfile);
         bool skipUntouched = activePlayerZero && LiveMatchesBaseline(g);
-        try { if (HasAnySave(g) && !skipUntouched) Create(g, "还原前安全快照"); }
+        try { if (safetySnapshot && HasAnySave(g) && !skipUntouched) Create(g, "还原前安全快照"); }
         catch (InvalidOperationException ex)
             when (ex.Message.Contains("没有变化") || ex.Message.Contains("没有可备份")) { }
 
@@ -873,10 +876,10 @@ public static class BackupService
 
         // 还原完成：记录 live 基线指纹（SwitchTo 离开零备份玩家时据此判断她有没有玩过）
         SetLiveBaseline(g);
-        // 落还原标记：📍=💾 时筹码据此显示「存档已还原」而非「存档备份一致」。
-        // 玩家切换也走本方法，但 SwitchTo 随后会移除目标玩家的标记（切换不是用户心智里的"还原"）。
-        g.RestoredMarks ??= new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        g.RestoredMarks[r.Profile ?? ""] = r.SavedAt != DateTime.MinValue ? r.SavedAt : r.Time;
+        // 手动还原成功 = 最明确的"认可动作"：心目中的指针指向还原目标（原因 restore）。
+        // 玩家切换也走本方法，但显式传 markFavorite:false——切换不改变目标玩家自己的指针。
+        if (markFavorite)
+            ProfileService.MarkFavorite(g, r.Profile ?? "", r.FileJson, "restore");
     }
 
     // ── live 基线指纹（运行时，不持久化）──────────────────────
@@ -976,21 +979,42 @@ public static class BackupService
         catch { return false; }
     }
 
+    /// <summary>在该玩家名下查找内容与当前 live 完全一致的备份（严格口径或跨目录口径命中均可），
+    /// 按打包时间新→旧返回第一份。切换玩家时据此识别「live 只是某份已有备份的还原件」
+    /// （典型：刚手动还原到旧档），不再打内容重复的「切换玩家」zip；找不到返回 null。</summary>
+    public static BackupRecord? FindSnapshotMatchingLive(GameEntry g, string profile)
+    {
+        foreach (var r in g.Backups
+                     .Where(b => string.Equals(b.Profile ?? "", profile ?? "", StringComparison.Ordinal))
+                     .OrderByDescending(b => b.Time))
+        {
+            if (!IsRestorable(g, r)) continue;
+            try
+            {
+                if (IsLiveSameAsSnapshot(g, r) || IsLiveSameAsSnapshotContent(g, r)) return r;
+            }
+            catch { /* 单份读取失败不影响继续查找更早的包 */ }
+        }
+        return null;
+    }
+
     private static string NormPath(string p)
     {
         try { return Path.GetFullPath(p).TrimEnd('\\', '/'); }
         catch { return p; }
     }
 
-    /// <summary>当前玩家筹码的 live 核对结果（时间轴模型：三个时间点严格比较，每个 Kind 唯一对应一种事实）。
-    /// 📍live=当前存档最新游戏内保存时间；💾=本机各备份最大存档时间；☁ 由调用方另行联网核对。
-    /// Kind：nosave=存档目录空；nobackup=有 live 但没有任何含存档的备份（空锚点/损坏记录不算）；
-    /// localnewer=💾&gt;📍（本机有比当前进度新的备份：还原旧档或云端新版已下载，live 该被替代）；
-    /// restored=📍=💾 且最近操作是手动还原（MatchedAt=还原所到的存档时间）；
-    /// same=📍=💾 且最近操作是备份；changed=📍&gt;💾（玩出了未备份进度）；
-    /// unknown=无法确定（调用方保留静态文案）。</summary>
+    /// <summary>当前玩家筹码的 live 核对结果（以"心目中的存档"指针包为基准的时间轴模型）。
+    /// 📍live=当前存档最新游戏内保存时间；★=她认可的那份备份（指针包；失效则回退最新可还原包）的存档时间。
+    /// Kind：nosave=存档目录空；nobackup=有 live 但没有任何可还原备份；
+    /// same=📍=★（正停在她认可的档；具体措辞由 FavoriteWhy 决定：已还原到/已备份·手动/已备份·自动/一致）；
+    /// changed=📍&gt;★（玩出了未备份进度）；older=★&gt;📍（当前进度早于心目中的档，点击行可还原回去；
+    /// 库中更新的备份由备份列表的橙色感叹号逐行提示，不再在筹码上告警）；
+    /// unknown=无法确定（调用方保留静态文案）。
+    /// BackupLatest=★的存档时间；MatchedAt=same 时=★时间；FavoriteWhy=指针移动原因。</summary>
     public readonly record struct LiveStateInfo(string Kind, int LiveFiles, DateTime LiveLatest,
-        DateTime BackupLatest, int BackupCount, DateTime MatchedAt = default);
+        DateTime BackupLatest, int BackupCount, DateTime MatchedAt = default,
+        DateTime RestoredAt = default, string FavoriteWhy = "");
 
     /// <summary>live 与备份"同一时刻"判定容差：同机 NTFS 为精确 ticks，留 2 秒兼容 FAT/exFAT/跨卷拷贝。</summary>
     internal const long LiveTimeToleranceTicks = TimeSpan.TicksPerSecond * 2;
@@ -1002,42 +1026,52 @@ public static class BackupService
             var live = LiveSignature(g);
             long liveMax = live.Count > 0 ? live.Max(x => x.Mtime) : 0;
             var mine = g.Backups.Where(b => (b.Profile ?? "") == (profile ?? "")).ToList();
-            // 💾 必须按 SavedAt（游戏内存档时间）取 max，不能取打包时间最新的一条：
-            // 还原前安全快照打包时间最新，记的却是还原前的旧进度；空锚点 SavedAt=MinValue 不参与。
-            long localMax = 0;
-            foreach (var b in mine)
-                if (b.SavedAt != DateTime.MinValue)
-                {
-                    long t = b.SavedAt.ToUniversalTime().Ticks;
-                    if (t > localMax) localMax = t;
-                }
-            DateTime backupLatest = localMax > 0
-                ? new DateTime(localMax, DateTimeKind.Utc).ToLocalTime() : default;
+            // ★ 心目中的档：指针包优先，丢失/损坏回退最新可还原包（why=fallback）
+            var fav = ProfileService.ResolveFavorite(g, profile ?? "", out string why);
+            long favTime = fav != null && fav.SavedAt != DateTime.MinValue
+                ? fav.SavedAt.ToUniversalTime().Ticks : 0;
+            DateTime favAt = favTime > 0 ? new DateTime(favTime, DateTimeKind.Utc).ToLocalTime() : default;
             if (live.Count == 0)
-                return new LiveStateInfo("nosave", 0, default, backupLatest, mine.Count);
-            if (localMax == 0)
+                return new LiveStateInfo("nosave", 0, default, favAt, mine.Count, default, default, why);
+            if (fav == null)
                 return new LiveStateInfo("nobackup", live.Count,
-                    new DateTime(liveMax, DateTimeKind.Utc), default, mine.Count);
+                    new DateTime(liveMax, DateTimeKind.Utc), default, mine.Count, default, default, why);
+            // 指针是空锚点（SavedAt=MinValue）：live 有内容即"选定空档之后玩出了进度"
             string kind;
             DateTime matchedAt = default;
-            if (localMax - liveMax > LiveTimeToleranceTicks)
-                kind = "localnewer";
-            else if (liveMax - localMax > LiveTimeToleranceTicks)
+            if (favTime == 0)
                 kind = "changed";
-            else if (g.RestoredMarks != null &&
-                     g.RestoredMarks.TryGetValue(profile ?? "", out var mark) &&
-                     Math.Abs(mark.ToUniversalTime().Ticks - liveMax) <= LiveTimeToleranceTicks)
-            {
-                // 📍=💾：靠还原标记区分「刚还原」与「刚备份」
-                kind = "restored";
-                matchedAt = mark;
-            }
-            else
-                kind = "same";
+            else if (liveMax - favTime > LiveTimeToleranceTicks)
+                kind = "changed";
+            else if (favTime - liveMax > LiveTimeToleranceTicks)
+                kind = "older";
+            else { kind = "same"; matchedAt = favAt; }
             return new LiveStateInfo(kind, live.Count, new DateTime(liveMax, DateTimeKind.Utc),
-                backupLatest, mine.Count, matchedAt);
+                favAt, mine.Count, matchedAt, default, why);
         }
         catch { return new LiveStateInfo("unknown", 0, default, default, 0); }
+    }
+
+    /// <summary>给备份行打"新于当前 live"运行时标记（还原旧档后，更新的备份行挂橙色感叹号）。
+    /// st=null（游玩中等不核对场景）时统一清标。判定口径：备份 SavedAt 比 live 最新存档时间新 2 秒以上；
+    /// live 目录为空时凡有存档时间的备份都算新于当前。纯展示，不落盘。</summary>
+    public static void ApplyNewerThanLiveFlags(IEnumerable<BackupRecord> rows, LiveStateInfo? st)
+    {
+        bool hasLive = st is { LiveFiles: > 0 } && st.Value.Kind != "nosave";
+        DateTime liveLocal = st is { } sv && sv.LiveLatest != default
+            ? sv.LiveLatest.ToLocalTime() : default;
+        long liveTicks = hasLive ? liveLocal.ToUniversalTime().Ticks : 0;
+        foreach (var b in rows)
+        {
+            bool newer = st != null && b.SavedAt != DateTime.MinValue
+                && (!hasLive || b.SavedAt.ToUniversalTime().Ticks - liveTicks > LiveTimeToleranceTicks);
+            b.IsNewerThanLive = newer;
+            b.NewerThanLiveTip = newer
+                ? $"该备份存档于 {b.SavedAt:yyyy-MM-dd HH:mm}\n" +
+                  $"当前存档停在 {(hasLive ? liveLocal.ToString("yyyy-MM-dd HH:mm") : "（存档目录为空）")}\n" +
+                  "此备份新于当前存档，还原它将进入更新的进度"
+                : "";
+        }
     }
 
     /// <summary>当前 live 是否与基线完全一致（文件集/大小/mtime 全等；基线未设返回 false）。</summary>
@@ -1724,10 +1758,18 @@ public static class BackupService
         string profile = g.ActiveProfile ?? "";
         // 只在当前玩家的备份范围内清理；其他玩家的备份不受保留份数限制影响
         var mine = g.Backups.Where(b => (b.Profile ?? "") == profile).ToList();
+        // 各玩家"心目中的存档"指针包一律豁免（含其他玩家——按整条游戏保护，与 mine 求交自然只命中本人的）。
+        // FileJson 可能存相对或绝对口径，ResolveFile 归一为绝对路径后与 b.File 比较。
+        var favFiles = new HashSet<string>(
+            (g.SwitchAnchors?.Values ?? Enumerable.Empty<string>())
+                .Where(p => !string.IsNullOrEmpty(p))
+                .Select(BackupRecord.ResolveFile),
+            StringComparer.OrdinalIgnoreCase);
+        bool IsProtected(BackupRecord b) => b.Locked || favFiles.Contains(b.File);
         // 只删除「没有后继增量引用」的备份，保证增量链始终完整。
         // 列表按新→旧插入，Last 即最旧（时间相同同秒创建时也比按 Time 排序可靠）
-        // 锁定项额外保留、不占保留份数配额：仅当「未锁定」数量超限时才淘汰
-        while (mine.Count(b => !b.Locked) > max)
+        // 锁定项与心目中指针包额外保留、不占保留份数配额：仅当「未受保护」数量超限时才淘汰
+        while (mine.Count(b => !IsProtected(b)) > max)
         {
             var referenced = mine
                 .Where(b => b.BaseFile.Length > 0)
@@ -1735,7 +1777,7 @@ public static class BackupService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var candidates = mine
                 .Where(b => !referenced.Contains(Path.GetFileName(b.File)))
-                .Where(b => !b.Locked)          // 锁定的备份受保护：不参与自动淘汰（手动删除照常）
+                .Where(b => !IsProtected(b))   // 🔒锁定 与 ★心目中指针包：不参与自动淘汰（手动删除照常）
                 .ToList();
             if (candidates.Count == 0) break;  // 未锁定且不在增量链上的候选没了 → 宁可超限也不删锁定项
             // 运行中热快照价值低、时效短 → 优先淘汰，尽量保住冷备份链（列表新→旧，Last 即最旧）

@@ -38,7 +38,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly HashSet<string> _autoBusy = new(StringComparer.Ordinal);
     /// <summary>自动备份并发上限：多游戏同时退出时最多 2 路打包（存档盘 IO 密集，再多收益小）。</summary>
     private static readonly SemaphoreSlim AutoBackupGate = new(2, 2);
-    private readonly DispatcherTimer _watchTimer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private readonly DispatcherTimer _watchTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(2.4) };
     private bool _suppressAutoToast;
     private DateTime _lastAutoBackup = DateTime.MinValue;
@@ -172,6 +172,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _ = ProfileService.MaterializeLegacyDefaultPlayers();
             // 旧备份记录补算存档时间（幂等；读 zip manifest，后台跑不阻塞 UI）
             await Task.Run(() => BackupService.BackfillSavedAt());
+            // 一次性迁移：建立"心目中的存档"指针并退役 RestoredMarks（依赖 SavedAt 已回填，故置于其后；幂等）
+            ProfileService.BackfillFavorite();
             if (SelectedGame is { } sg0)
             {
                 sg0.RefreshVisibleBackups();   // 重建集合让列表/筹码的时间文本按新字段刷新
@@ -300,7 +302,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             BackupRecord r;
             int skipped = 0;
-            r = await Task.Run(() => BackupService.Create(g, "热键备份", hot, out skipped));
+            // 手动备份（无论游戏是否运行中）= 认可动作：心目中的指针移到新包
+            r = await Task.Run(() => ProfileService.BackupAsFavorite(g, "热键备份", hot, "manual", out skipped));
             RefreshAfterChange(g);
             ShowToast(hot && skipped > 0
                 ? $"✓「{g.DisplayName}」备份完成 {r.SizeText}（跳过 {skipped} 个占用文件）"
@@ -1705,10 +1708,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             BackupRecord r;
             int skipped = 0;
+            // 手动备份 = 认可动作：心目中的指针移到新包（热备份同理——这是用户主动点的）
             if (hot)
-                r = await Task.Run(() => BackupService.Create(g, "手动热备份", true, out skipped));
+                r = await Task.Run(() => ProfileService.BackupAsFavorite(g, "手动热备份", true, "manual", out skipped));
             else
-                r = await Task.Run(() => BackupService.Create(g, "手动备份"));
+                r = await Task.Run(() => ProfileService.BackupAsFavorite(g, "手动备份", false, "manual", out skipped));
             RefreshAfterChange(g);
             ShowToast(hot && skipped > 0
                 ? $"备份完成「{r.Note}」 {r.SizeText}（跳过 {skipped} 个占用文件）"
@@ -1788,9 +1792,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_busyDepth > 0 || string.IsNullOrEmpty(vm.StatusAction)) return;
         string profile = vm.Name;
 
-        if (vm.StatusAction == "restoreLocal")
+        if (vm.StatusAction == "restoreFavorite")
         {
-            var r = LatestRestorable(g, profile);
+            // 当前 live 早于心目中的档：还原她认可的指针包（而非"打包时间最新"包）
+            var r = ProfileService.ResolveFavorite(g, profile, out _);
             if (r == null) { ShowToast("没有找到可还原的备份", true); return; }
             await RestoreAsync(g, r);
             return;
@@ -1830,12 +1835,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             finally { SetBusy(false); }
         }
     }
-
-    /// <summary>该玩家名下打包时间最新、链路完整可还原的备份。</summary>
-    private static BackupRecord? LatestRestorable(GameEntry g, string profile)
-        => g.Backups.Where(b => (b.Profile ?? "") == profile)
-            .OrderByDescending(b => b.Time)
-            .FirstOrDefault(b => BackupService.IsRestorable(g, b));
 
     private async void OnDeleteBackup(object s, RoutedEventArgs e)
     {
@@ -2511,6 +2510,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 var cur = g.ProfileSlots.FirstOrDefault(v => v.IsActive);
                 if (cur is null || cur.Name != profile) return;  // 玩家已切换：结果作废
                 ApplyLiveState(cur, st, running);
+                // 备份行感叹号与筹码同一次 live 核对、同一基准：游玩中统一清标
+                BackupService.ApplyNewerThanLiveFlags(g.VisibleBackups, running ? null : st);
             });
             // ☁ 云端核对：已配置且游戏没在玩时，查该玩家云端最新备份的存档时间是否比本机新。
             // 严格事实 ☁>💾 才覆盖本地状态；离线/超时/未配置一律静默，只显示本地事实。
@@ -2552,12 +2553,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         string bt = st.BackupLatest != default ? st.BackupLatest.ToString("MM-dd HH:mm") : "";
         string lt = st.LiveLatest != default ? st.LiveLatest.ToLocalTime().ToString("MM-dd HH:mm") : "";
-        string mt = st.MatchedAt != default ? st.MatchedAt.ToString("MM-dd HH:mm") : "";
         if (running)
         {
+            vm.SetRestoredTag("");
             vm.SetStatus("游玩中", "normal", "游戏正在运行\n退出游戏后自动核对并更新备份状态");
             return;
         }
+        // 非游玩状态先清次要标记；same+restore 分支按需重新落上（每次核对都显式刷新，不残留）
+        vm.SetRestoredTag("");
         switch (st.Kind)
         {
             case "nosave":
@@ -2567,22 +2570,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 vm.SetStatus("从未备份", "warn",
                     $"当前有 {st.LiveFiles} 个存档文件，还没有备份\n点下方「立即备份」保存进度");
                 break;
-            case "localnewer":
-                vm.SetStatus("本地有较新备份", "info",
-                    $"本机有存档时间 {bt} 的备份，比当前存档新\n点击这行直接还原到那份备份",
-                    "restoreLocal");
-                break;
             case "same":
-                vm.SetStatus("存档备份一致", "good",
-                    $"当前存档与最近备份一致\n存档时间 {bt}");
+                // 停在她"心目中的档"：措辞按指针移动原因区分（还原/手动/自动/其他）
+                switch (st.FavoriteWhy)
+                {
+                    case "restore":
+                        vm.SetStatus("存档已还原", "good",
+                            $"当前存档就是你手动还原选择的那份\n存档时间 {bt}");
+                        vm.SetRestoredTag($"↩ 已还原到 {bt}",
+                            $"最近一次手动还原到存档时间 {bt} 的备份\n这是你认可的进度；备份列表中更新的备份会以橙色感叹号提示");
+                        break;
+                    case "manual":
+                        vm.SetStatus("存档已备份", "good",
+                            $"当前存档与手动备份一致\n存档时间 {bt}");
+                        break;
+                    case "auto":
+                        vm.SetStatus("存档已备份", "good",
+                            $"当前存档与退出游戏时的自动备份一致\n存档时间 {bt}");
+                        break;
+                    default:   // switch / init / fallback / 迁移兜底
+                        vm.SetStatus("存档备份一致", "good",
+                            $"当前存档与心目中的备份一致\n存档时间 {bt}");
+                        break;
+                }
                 break;
-            case "restored":
-                vm.SetStatus("存档已还原", "good",
-                    $"当前存档是还原的备份\n存档时间 {mt}");
+            case "older":
+                // 当前 live 早于她认可的档（游戏内自己读了旧槽位/外部回退）：点击行还原指针包
+                vm.SetStatus("当前进度较旧", "info",
+                    $"当前存档停在 {lt}\n心目中的档存档时间 {bt}\n点击这行还原到心目中的档",
+                    "restoreFavorite");
                 break;
             case "changed":
+                // live 新于最后一次定格的备份：她心里要的是当前新进度，旧包只配叫"上次备份"，
+                // 不蹭"心目中的档"（那只属于 same/older 语境）
                 vm.SetStatus("新存档未备份", "warn",
-                    $"当前进度有未备份的变化\n最新存档 {lt}　最近备份 {bt}\n点下方「立即备份」保存");
+                    $"当前进度还没备份\n当前存档 {lt}\n上次备份 {bt}\n点下方「立即备份」保存");
                 break;
             // unknown：保留 RefreshProfiles 给的静态备份时间，不乱标状态
         }
@@ -2669,14 +2691,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         // 手动备份/还原/玩家操作/扫描进行中：本轮跳过，避免与后台任务并发改集合、互写 zip
         if (_busyDepth > 0) return;
+        // 每轮只快照一次全部进程名（供外部启动的游戏按名匹配）：88 个游戏各枚举一次 → 一轮一次
+        var runningNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var p in Process.GetProcesses())
+            {
+                try { runningNames.Add(p.ProcessName); }
+                finally { p.Dispose(); }
+            }
+        }
+        catch { /* 枚举受限：本轮退化为不识别外部启动游戏，下轮再试；PID 跟踪不受影响 */ }
         foreach (var g in Store.Games.Where(g => g.ExePath.Length > 0).ToList())
         {
-            bool running = CheckGameRunningState(g);
+            bool running = CheckGameRunningState(g, runningNames);
             if (running)
             {
                 if (!_playOpen.ContainsKey(g.Id))
                 {
-                    // 本应用 exe 启动的用精确启动时刻；Steam 协议/外部启动以首次轮询发现为起点（≤3s 误差）
+                    // 本应用 exe 启动的用精确启动时刻；Steam 协议/外部启动以首次轮询发现为起点（≤1s 误差）
                     bool fromApp = _launched.TryGetValue(g.Id, out var li0);
                     _playOpen[g.Id] = (fromApp ? li0.StartedAt : DateTime.Now, fromApp ? "app" : "monitor");
                 }
@@ -2717,8 +2750,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     /// <summary>游戏运行状态检测：本应用用 exe 启动过的游戏优先认记录的 PID（同名进程不再误判），
-    /// PID 已死即视为退出并清除记录；Steam 协议启动 / 外部启动回退进程名匹配。</summary>
-    private bool CheckGameRunningState(GameEntry g)
+    /// PID 已死即视为退出并清除记录；Steam 协议启动 / 外部启动用本轮进程名快照匹配。
+    /// runningNames：WatchTick 每轮只枚举一次的全部进程名。</summary>
+    private bool CheckGameRunningState(GameEntry g, HashSet<string> runningNames)
     {
         if (_launched.TryGetValue(g.Id, out var li))
         {
@@ -2726,7 +2760,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _launched.Remove(g.Id);
             return false;
         }
-        return BackupService.IsGameRunning(g);
+        return !string.IsNullOrEmpty(g.ProcessName) && runningNames.Contains(g.ProcessName);
     }
 
     /// <summary>PID 是否仍是当初启动的那个进程（进程已死或 PID 被其他新进程复用均视为退出）。</summary>
@@ -2751,7 +2785,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AppendAutoLog($"「{g.DisplayName}」开始 {note}（{(hot ? "运行中快照" : "退出备份")}）");
         try
         {
-            var r = await Task.Run(() => BackupService.Create(g, note, hot));
+            // 退出自动备份=认可动作（指针移到新包）；运行中热快照不移动指针——游戏还在跑，退出那次才是最终进度
+            var r = hot
+                ? await Task.Run(() => BackupService.Create(g, note, hot))
+                : await Task.Run(() => ProfileService.BackupAsFavorite(g, note, false, "auto", out _));
             if (!hot) _lastAutoBackup = DateTime.Now;
             AppendAutoLog($"「{g.DisplayName}」完成 {note}：{r.File}（{r.SizeText}）");
             await Dispatcher.InvokeAsync(() =>

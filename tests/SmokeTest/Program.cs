@@ -395,11 +395,22 @@ else
     BackupService.Restore(g2, c3);
     Check("增量: 2 级链还原", File.ReadAllText(Path.Combine(saveDir2, "x.txt")) == "X333");
 
-    // 10.6 保留份数清理：无依赖的旧备份先删、链上节点保留
+    // 10.6 保留份数清理：无依赖的旧备份先删、链上节点保留。
+    // 注意：上面刚 Restore(c3)，c3 已成"心目中的档"指针包（why=restore）→ 与🔒并列豁免、不占配额；
+    // 此时可删候选只剩最新点 c4（永不牺牲）→ 宁超上限也一份不删，c3 与整条链都保住
     Store.Settings.MaxKeepPerGame = 3;
-    BackupService.Prune(g2);   // 4 份：c4,c3,c2,c1 → c3/c2 无后继引用 → 删 c3 → 3 份
-    Check("保留: 清理到上限且不断链", g2.Backups.Count == 3 &&
-        g2.Backups.Any(b => b.Kind == "incr") && g2.Backups.Any(b => b.Kind == "full"),
+    BackupService.Prune(g2);   // 4 份：c4(最新,full) c3(★指针,incr) c2/c1(链上被引用) → 无可删候选
+    Check("保留: 心目中指针包豁免 Prune（超配额也保住 c3），增量链不断",
+        g2.Backups.Count == 4 && g2.Backups.Contains(c3)
+        && g2.Backups.Any(b => b.Kind == "incr") && g2.Backups.Any(b => b.Kind == "full"),
+        string.Join(",", g2.Backups.Select(b => b.Kind)));
+    // 解除指针（模拟她认可了更新的 c4）后再 Prune：上限压到 2，未保护 3 份超限 → 旧节点可被淘汰
+    ProfileService.MarkFavorite(g2, c4.Profile ?? "", c4.FileJson, "manual");
+    Store.Settings.MaxKeepPerGame = 2;
+    BackupService.Prune(g2);   // 未保护 3 份 > 2：候选 {c3 无引用}→ 删 c3
+    Check("保留: 指针移走后旧备份可正常淘汰（3 份）且最新点存活",
+        g2.Backups.Count == 3 && g2.Backups.Contains(c4) && !g2.Backups.Contains(c3)
+        && g2.Backups.Any(b => b.Kind == "full"),
         string.Join(",", g2.Backups.Select(b => b.Kind)));
     BackupService.Restore(g2, g2.Backups[0]);   // 剩余链仍可还原
     Check("保留: 清理后链仍可还原", File.ReadAllText(Path.Combine(saveDir2, "x.txt")).StartsWith("X"));
@@ -4538,56 +4549,63 @@ else
         stChanged49.Kind == "changed" && stChanged49.LiveLatest != default
         && stChanged49.BackupCount == 1, stChanged49.Kind);
 
-    // 时间轴模型：A=首备(tA)，B=更新的备份(tB)。还原回旧档 A 后，💾(=tB，安全快照也记 tB)>📍(=tA)
-    // → localnewer（本机有较新备份，可一键还原回去），而不是直接给 restored
+    // 心目中的档时间轴模型：A=首备(tA)，B=更新的备份(tB)。还原回旧档 A → 指针移到 A（why=restore），
+    // live==A → same；比 A 更新的备份 B 改由备份列表橙色感叹号逐行提示，筹码不再告警
     var bakB49 = BackupService.Create(g49, "新进度备份");
     Check("筹码状态: 两份备份齐备（还原去重不产生冗余快照）", g49.Backups.Count == 2,
         g49.Backups.Count.ToString());
-    Check("筹码状态: 备份后 live==最新备份 → same",
+    Check("筹码状态: 备份后 live==最新备份 → same（无指针时回退最新可还原包）",
         BackupService.GetLiveState(g49, prof49).Kind == "same", "");
     BackupService.Restore(g49, bak49);
     var stRestored49 = BackupService.GetLiveState(g49, prof49);
-    Check("筹码状态: 还原旧档、本机有更新备份 → localnewer（不误报新存档未备份）",
-        stRestored49.Kind == "localnewer" && stRestored49.BackupLatest > stRestored49.LiveLatest.ToLocalTime()
-        && stRestored49.BackupCount >= 2,
-        $"{stRestored49.Kind}/💾={stRestored49.BackupLatest:HH:mm:ss}/📍={stRestored49.LiveLatest.ToLocalTime():HH:mm:ss}");
-    // 先还原到最新备份 B（此刻 💾=tB 干净）：📍=💾=tB + 还原标记=tB → restored
+    Check("筹码状态: 还原旧档 → same + 指针=旧档 + why=restore（认可动作移动指针）",
+        stRestored49.Kind == "same" && stRestored49.FavoriteWhy == "restore"
+        && stRestored49.MatchedAt == bak49.SavedAt && stRestored49.BackupCount >= 2
+        && g49.SwitchAnchors.TryGetValue(prof49, out var favA49) && favA49 == bak49.FileJson,
+        $"{stRestored49.Kind}/why={stRestored49.FavoriteWhy}/📍={stRestored49.MatchedAt:HH:mm:ss}");
+    // 先还原到最新备份 B（此刻 live=tB 干净）：指针=B、why=restore、MatchedAt=tB
     BackupService.Restore(g49, bakB49);
     var stBack49 = BackupService.GetLiveState(g49, prof49);
-    Check("筹码状态: 还原最新备份 → restored 且 MatchedAt=该备份存档时间",
-        stBack49.Kind == "restored" && stBack49.MatchedAt == bakB49.SavedAt,
+    Check("筹码状态: 还原最新备份 → same 且 MatchedAt=该备份存档时间",
+        stBack49.Kind == "same" && stBack49.MatchedAt == bakB49.SavedAt
+        && stBack49.FavoriteWhy == "restore",
         $"{stBack49.Kind}/{stBack49.MatchedAt:HH:mm:ss}/{bakB49.SavedAt:HH:mm:ss}");
-    // 还原后再玩（新内容、存档时间设为 -1 分钟，比 B 新但不污染未来时间）→ changed；再备份 → same（标记解除）
+    // 还原后再玩（新内容、存档时间设为 -1 分钟，比 B 新但不污染未来时间）→ changed；
+    // 走手动备份入口（BackupAsFavorite）→ 指针移到新包 why=manual → same
     File.WriteAllText(Path.Combine(ls49, "save.dat"), "post-restore-fun");
     File.SetLastWriteTime(Path.Combine(ls49, "save.dat"), DateTime.Now.AddMinutes(-1));
-    Check("筹码状态: 还原后再玩 → changed（还原标记不掩盖新进度）",
+    Check("筹码状态: 还原后再玩 → changed（指针停在 B，不掩盖新进度）",
         BackupService.GetLiveState(g49, prof49).Kind == "changed", "");
-    BackupService.Create(g49, "再玩后的备份");
-    Check("筹码状态: 新备份产生、标记解除 → same",
+    var bakC49 = ProfileService.BackupAsFavorite(g49, "再玩后的备份", false, "manual", out _);
+    Check("筹码状态: 手动备份移动指针 → same + why=manual + MatchedAt=新包",
         BackupService.GetLiveState(g49, prof49).Kind == "same"
-        && (g49.RestoredMarks?.ContainsKey(prof49) != true), "");
-    // 幂等：此时再回首备 A，💾 已含 -1 分钟的新进度（含还原前安全快照）→ 稳定 localnewer
+        && g49.FavoriteWhy!.TryGetValue(prof49, out var why49) && why49 == "manual"
+        && g49.SwitchAnchors[prof49] == bakC49.FileJson, "");
+    // 幂等：再回首备 A，live=A → 稳定 same+restore；比 A 新的 B/C 由行感叹号提示（下方区块 59 专测打标）
     File.WriteAllText(Path.Combine(ls49, "save.dat"), "abc");
     File.SetLastWriteTime(Path.Combine(ls49, "save.dat"), DateTime.Now.AddMinutes(-3));
     BackupService.Restore(g49, bak49);
-    Check("筹码状态: 再次还原回首备仍稳定识别 localnewer（幂等，一键可回到最新进度）",
-        BackupService.GetLiveState(g49, prof49).Kind == "localnewer", "");
+    Check("筹码状态: 再次还原回首备 → same+restore（指针幂等落 A）",
+        BackupService.GetLiveState(g49, prof49) is var stAgain49
+        && stAgain49.Kind == "same" && stAgain49.FavoriteWhy == "restore"
+        && g49.SwitchAnchors[prof49] == bak49.FileJson, "");
     // 收尾还原到最新备份，供后续 JSON/跨机用例使用
     BackupService.Restore(g49, g49.Backups.OrderByDescending(b => b.SavedAt).First());
 
-    // 还原标记 JSON 持久化往返（重启后仍认得「存档已还原」）
+    // 心目中的档指针 JSON 持久化往返（重启后仍认得她认可的那份与原因）
     var markJson49 = System.Text.Json.JsonSerializer.Serialize(g49);
     var g49Round = System.Text.Json.JsonSerializer.Deserialize<GameEntry>(markJson49)!;
-    Check("筹码状态: 还原标记随 games.json 持久化往返（字段不丢）",
-        g49Round.RestoredMarks != null && g49Round.RestoredMarks.ContainsKey(prof49) == true
-        && g49Round.RestoredMarks[prof49] != default,
-        (g49Round.RestoredMarks?.ContainsKey(prof49) == true).ToString());  // 收尾刚还原最新备份，标记应在
-    g49Round.RestoredMarks!["x"] = DateTime.Now;
+    Check("筹码状态: 指针+原因随 games.json 持久化往返（字段不丢）",
+        g49Round.SwitchAnchors != null && g49Round.FavoriteWhy != null
+        && g49Round.SwitchAnchors.TryGetValue(prof49, out var favRound49)
+        && favRound49 == g49.Backups.OrderByDescending(b => b.SavedAt).First().FileJson
+        && g49Round.FavoriteWhy.TryGetValue(prof49, out var whyRound49) && whyRound49 == "restore",
+        "指针或原因往返丢失");
+    g49Round.FavoriteWhy!["x"] = "manual";
     var g49Round2 = System.Text.Json.JsonSerializer.Deserialize<GameEntry>(
         System.Text.Json.JsonSerializer.Serialize(g49Round))!;
-    Check("筹码状态: 还原标记值往返一致",
-        g49Round2.RestoredMarks!.ContainsKey("x")
-        && Math.Abs((g49Round2.RestoredMarks["x"] - g49Round.RestoredMarks["x"]).TotalSeconds) < 1, "");
+    Check("筹码状态: FavoriteWhy 值往返一致",
+        g49Round2.FavoriteWhy!.ContainsKey("x") && g49Round2.FavoriteWhy["x"] == "manual", "");
 
     // 回归（英灵神殿真实事故）：还原前安全快照打包时间最新（22:49），内容却是旧进度（前一天 23:18）；
     // 另有一份打包更早、内容更新的备份。LastProgressSaved 必须按 SavedAt 取 max，不能按 Time 取最新。
@@ -4638,18 +4656,19 @@ else
     Check("跨机云还原: 还原前安全快照已建立",
         gDst49b.Backups.Any(b => b.Note == "还原前安全快照"), "");
     var stCloud49b = BackupService.GetLiveState(gDst49b, "云游49b");
-    Check("跨机云还原: 还原异地最新包 → restored（按存档时间，不看打包时间/源机路径）",
-        stCloud49b.Kind == "restored" && stCloud49b.MatchedAt != default, stCloud49b.Kind);
+    Check("跨机云还原: 还原异地最新包 → same+restore（指针=云端包，按存档时间不看打包时间/源机路径）",
+        stCloud49b.Kind == "same" && stCloud49b.FavoriteWhy == "restore"
+        && stCloud49b.MatchedAt != default, stCloud49b.Kind);
     Check("跨机云还原: 严格口径因源机路径漏判、内容口径命中",
         !BackupService.IsLiveSameAsSnapshot(gDst49b, adopted49b)
         && BackupService.IsLiveSameAsSnapshotContent(gDst49b, adopted49b), "");
     File.WriteAllText(Path.Combine(dstLive49b, "save.dat"), "cloud-progress-v1-TAMPERED");
     Check("跨机内容口径: 内容变化后放宽判定同样判否",
         !BackupService.IsLiveSameAsSnapshotContent(gDst49b, adopted49b), "");
-    Check("跨机云还原: 篡改后 live 时间落后云端备份 → localnewer（可一键回云端新版）",
-        BackupService.GetLiveState(gDst49b, "云游49b").Kind == "localnewer", "");
+    Check("跨机云还原: 篡改后 live 时间落后心目中的云端档 → older（点击行可还原指针包）",
+        BackupService.GetLiveState(gDst49b, "云游49b").Kind == "older", "");
 
-    // 用户实测：非严格还原后多出旧残留文件（本地世界/自动备份目录），残留不新于被还原进度 → restored
+    // 用户实测：非严格还原后多出旧残留文件（本地世界/自动备份目录），残留不新于被还原进度 → same
     string srcLive49c = Path.Combine(temp, "src_pc_live_49c");
     Directory.CreateDirectory(srcLive49c);
     File.WriteAllText(Path.Combine(srcLive49c, "cloud.dat"), "CLOUD-NEW");
@@ -4674,12 +4693,13 @@ else
     Check("非严格云还原: 云端文件落盘且旧残留保留",
         filesAfter49c.Contains("cloud.dat") && filesAfter49c.Contains("old_local.dat"),
         string.Join(",", filesAfter49c));
-    Check("非严格云还原: 残留不新于云端进度 → restored（英灵神殿 18 残留文件场景）",
-        BackupService.GetLiveState(gDst49c, "云游49c").Kind == "restored",
+    Check("非严格云还原: 残留不新于云端进度 → same（英灵神殿 18 残留文件场景）",
+        BackupService.GetLiveState(gDst49c, "云游49c").Kind == "same",
         BackupService.GetLiveState(gDst49c, "云游49c").Kind);
 
     // 反向场景：还原前本地残留就比云端包新（本地玩得更远却还原了旧云端档，非严格）。
-    // 还原前安全快照完整记下新进度（SavedAt=+50）→ 还原后 📍=💾=+50，新进度已被备份兜住，不误报
+    // 新模型下指针=云端包(+40)、live(+50) 更新 → changed（如实提示未备份新进度）；
+    // 「新进度已被备份兜住」改由 LastProgressSaved/安全快照事实保证（筹码不再替库粉饰）
     string dstLive49d = Path.Combine(temp, "dst_pc_live_49d");
     Directory.CreateDirectory(dstLive49d);
     File.WriteAllText(Path.Combine(dstLive49d, "old_local.dat"), "OLD-WORLD");
@@ -4694,10 +4714,15 @@ else
     BackupService.Restore(gDst49d, adopted49d, purgeNewFiles: false,
         targetPaths: ProfileService.EffectivePaths(gDst49d));
     var st49d = BackupService.GetLiveState(gDst49d, "云游49c");
-    Check("非严格云还原: 本地残留新于云端档 → 不报新存档未备份（安全快照 SavedAt 兜住新进度）",
-        st49d.Kind != "changed" && st49d.Kind != "nobackup", st49d.Kind);
-    Check("非严格云还原: 此时 📍=💾=本地新进度 → same，且云端文件也已在目录",
-        st49d.Kind == "same" && File.Exists(Path.Combine(dstLive49d, "cloud.dat")), st49d.Kind);
+    Check("非严格云还原: 本地残留新于云端档 → changed（指针停在云端包，如实提示有未备份新进度）",
+        st49d.Kind == "changed", st49d.Kind);
+    Check("非严格云还原: 本地新进度由还原前安全快照兜住（LastProgressSaved=+50，云端文件也在目录）",
+        File.Exists(Path.Combine(dstLive49d, "cloud.dat"))
+        && gDst49d.Backups.Any(b => b.Note == "还原前安全快照"
+            && Math.Abs((b.SavedAt - DateTime.Now.AddMinutes(50)).TotalSeconds) < 2)
+        && ProfileService.LastProgressSaved(gDst49d, "云游49c") is DateTime lps49d
+        && Math.Abs((lps49d - DateTime.Now.AddMinutes(50)).TotalSeconds) < 2,
+        st49d.Kind);
 
     // VM 接线：RefreshProfiles 后当前筹码存在且有静态状态；短词上限 7 字防撑宽
     g49.RefreshProfiles();
@@ -4705,8 +4730,8 @@ else
     Check("筹码状态: 当前筹码存在且静态文案非空",
         activeVm49 != null && activeVm49.StatusText.Length > 0 && activeVm49.StatusKind.Length > 0,
         activeVm49?.StatusText ?? "<null>");
-    string[] shortStatus49 = { "存档备份一致", "存档已还原", "新存档未备份", "游玩中", "从未备份", "游戏无存档",
-        "本地有较新备份", "云端有较新备份" };
+    string[] shortStatus49 = { "存档备份一致", "存档已还原", "存档已备份", "新存档未备份", "游玩中", "从未备份",
+        "游戏无存档", "当前进度较旧", "云端有较新备份" };
     Check("筹码状态: 所有动态短词 ≤7 个字（防筹码过长/截断）",
         shortStatus49.All(t => t.Length <= 7), string.Join("/", shortStatus49.Select(t => t.Length)));
     var otherVm49 = g49.ProfileSlots.FirstOrDefault(v => !v.IsActive);
@@ -4715,9 +4740,9 @@ else
     // 可点链接的 VM 契约：初始不可点；SetStatus 带 action 后放开
     Check("筹码状态: 状态动作初始为空、不可点",
         !activeVm49!.StatusClickable && string.IsNullOrEmpty(activeVm49.StatusAction), "");
-    activeVm49.SetStatus("本地有较新备份", "info", "tip", "restoreLocal");
-    Check("筹码状态: restoreLocal 动作 → 可点；清空动作复位",
-        activeVm49.StatusClickable && activeVm49.StatusAction == "restoreLocal", "");
+    activeVm49.SetStatus("当前进度较旧", "info", "tip", "restoreFavorite");
+    Check("筹码状态: restoreFavorite 动作 → 可点；清空动作复位",
+        activeVm49.StatusClickable && activeVm49.StatusAction == "restoreFavorite", "");
     activeVm49.SetStatus("x", "normal", "tip");
     Check("筹码状态: 清空动作后恢复不可点", !activeVm49.StatusClickable, "");
 
@@ -4746,7 +4771,7 @@ else
         && chipBlock49.Contains("IsHitTestVisible=\"{Binding StatusClickable}\"")
         && chipBlock49.Contains("Cursor=\"Hand\"")
         && chipBlock49.Contains("Value=\"Underline\"")
-        && chipBlock49.Contains("Value=\"restoreLocal\"")
+        && chipBlock49.Contains("Value=\"restoreFavorite\"")
         && chipBlock49.Contains("Value=\"restoreCloud\""), "");
     Check("筹码状态: 旧 SavedAtText 绑定已移除",
         !mainXaml49.Contains("SavedAtText"), "");
@@ -4758,25 +4783,27 @@ else
         mainCs49.Contains("RefreshActiveSlotLiveStateAsync(SelectedGame)")
         && System.Text.RegularExpressions.Regex.Matches(mainCs49, "RefreshActiveSlotLiveStateAsync\\(g\\)").Count >= 3,
         "");
-    Check("筹码状态: 状态词八件套齐全（含本机/云端较新备份）",
-        new[] { "存档备份一致", "存档已还原", "新存档未备份", "游玩中", "从未备份", "游戏无存档",
-            "本地有较新备份", "云端有较新备份" }
+    Check("筹码状态: 状态词九件套齐全（含当前进度较旧/云端有较新备份）",
+        new[] { "存档备份一致", "存档已还原", "存档已备份", "新存档未备份", "游玩中", "从未备份",
+            "游戏无存档", "当前进度较旧", "云端有较新备份" }
             .All(t => mainCs49.Contains(t)), "");
-    Check("筹码状态: 还原态悬停为「当前存档是还原的备份/存档时间」",
-        mainCs49.Contains("case \"restored\"") && mainCs49.Contains("当前存档是还原的备份")
-        && mainCs49.Contains("当前存档与最近备份一致"), "");
+    Check("筹码状态: same 态按 why 分四种措辞（restore/manual/auto/其他）",
+        mainCs49.Contains("case \"restore\":") && mainCs49.Contains("当前存档就是你手动还原选择的那份")
+        && mainCs49.Contains("当前存档与手动备份一致")
+        && mainCs49.Contains("当前存档与退出游戏时的自动备份一致")
+        && mainCs49.Contains("当前存档与心目中的备份一致"), "");
     Check("筹码状态: 云端核对接线（已配置才查/同口径比较/覆盖为 restoreCloud/离线静默）",
         mainCs49.Contains("CloudSyncService.Configured")
         && mainCs49.Contains("CloudSyncService.ShouldPromptCloudNewer(localSaved, newestCloud, known)")
         && mainCs49.Contains("\"restoreCloud\"")
-        && mainCs49.Contains("case \"localnewer\""), "");
-    Check("筹码状态: 状态行点击接线（本机一键还原/云端只下载不自动还原/百分比进度）",
+        && mainCs49.Contains("case \"older\""), "");
+    Check("筹码状态: 状态行点击接线（心目中的档一键还原/云端只下载不自动还原/百分比进度）",
         mainCs49.Contains("private async void OnSlotStatusClick")
         && mainCs49.Contains("PreparePlayerFromCloud(g, profile, default, progress)")
         && mainCs49.Contains("正在下载云端存档… {p * 100:0}%")
-        && mainCs49.Contains("LatestRestorable(g, profile)")
+        && mainCs49.Contains("ProfileService.ResolveFavorite(g, profile, out _)")
         && mainCs49.Contains("下载云端存档")
-        // 云端下载分支内不得再调 RestoreAsync（restoreLocal 分支的调用在方法前半段，这里按分支切片验证）
+        // 云端下载分支内不得再调 RestoreAsync（restoreFavorite 分支的调用在方法前半段，这里按分支切片验证）
         && mainCs49.Substring(mainCs49.IndexOf("if (vm.StatusAction == \"restoreCloud\")"))
                .IndexOf("RestoreAsync", StringComparison.Ordinal) < 0, "");
     // 下载防回传接线守卫：三个下载入口都登记、手动单份上传有防御闸、核验补存量登记
@@ -4804,12 +4831,14 @@ else
         "..", "..", "..", "..", "..", "src", "GameSaveManager", "Services", "BackupService.cs")));
     string profCs49 = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
         "..", "..", "..", "..", "..", "src", "GameSaveManager", "Services", "ProfileService.cs")));
-    Check("筹码状态: 还原标记在 Restore 落、Create 清；时间按 SavedAt 取 max（不被安全快照打包时间骗）",
-        svcCs49.Contains("g.RestoredMarks[r.Profile ?? \"\"]")
-        && svcCs49.Contains("g.RestoredMarks?.Remove(profileKey)")
-        && svcCs49.Contains("\"localnewer\""), "");
-    Check("筹码状态: SwitchTo 清除切入玩家的还原标记（切换≠还原）",
-        profCs49.Contains("g.RestoredMarks?.Remove(name)"), "");
+    Check("筹码状态: Restore 认可落指针（why=restore）、筹码以指针为基准、older 分支与行感叹号打标齐全",
+        svcCs49.Contains("ProfileService.MarkFavorite(g, r.Profile ?? \"\", r.FileJson, \"restore\")")
+        && svcCs49.Contains("\"older\"")
+        && svcCs49.Contains("public static void ApplyNewerThanLiveFlags"), "");
+    Check("筹码状态: SwitchTo 的 Restore 不写指针（markFavorite:false），指针只由认可动作移动",
+        profCs49.Contains("markFavorite: false")
+        && profCs49.Contains("public static BackupRecord? ResolveFavorite")
+        && profCs49.Contains("public static void BackfillFavorite"), "");
     Check("状态栏: 玩家措辞（最近一次自动备份/已开启自动备份 N 个游戏/备份位置）",
         mainCs49.Contains("最近一次自动备份")
         && mainCs49.Contains("已开启自动备份：") && mainCs49.Contains("个游戏 · 备份位置"), "");
@@ -4821,9 +4850,10 @@ else
         "..", "..", "..", "..", "..", "src", "GameSaveManager", "Models", "GameEntry.cs")));
     Check("筹码状态: RefreshProfiles 保持零 IO（不直接调 GetLiveState）",
         !gameEntryCs49.Contains("GetLiveState"), "");
-    Check("筹码状态: GetLiveState 七分支齐全（nosave/nobackup/localnewer/restored/same/changed/unknown）",
-        new[] { "nosave", "nobackup", "localnewer", "same", "restored", "changed", "unknown" }
-            .All(t => svcCs49.Contains(t)), "");
+    Check("筹码状态: GetLiveState 六分支齐全（nosave/nobackup/same/older/changed/unknown）",
+        new[] { "nosave", "nobackup", "same", "older", "changed", "unknown" }
+            .All(t => svcCs49.Contains(t))
+        && !svcCs49.Contains("\"localnewer\"") && !svcCs49.Contains("\"restored\""), "");
 
     // ===== 区块 50：备份行紧凑化（A 方案：只减间距，结构/按钮/文案一字不动）=====
     // 行模板整块：从 ItemsControl 起点截到操作栏前，覆盖 Grid Margin 到最后一个按钮
@@ -5773,6 +5803,477 @@ else
         BackupService.CheckPathLevelConflict(gWarn56, Path.Combine(temp, "warn56"))?.Contains("层级") == true, "");
     Check("层级提示: 不同目录树的同层级路径不警告",
         BackupService.CheckPathLevelConflict(gWarn56, Path.Combine(temp, "other56", "Saved")) == null, "");
+
+    // ── 57. 心目中的档指针：还旧档落 same+restore+次要标记；内部 Create 不动指针；UI/XAML/轮询提速接线守卫 ──
+    {
+        string ls57 = Path.Combine(temp, "dual_fact57");
+        Directory.CreateDirectory(ls57);
+        File.WriteAllText(Path.Combine(ls57, "save.dat"), "OLD-v1");
+        File.SetLastWriteTime(Path.Combine(ls57, "save.dat"), DateTime.Now.AddMinutes(-30));
+        var g57 = new GameEntry { NameEN = "DualFact57" };
+        g57.SavePaths.Add(new SavePathEntry { Path = ls57 });
+        var bakA57 = BackupService.Create(g57, "旧进度A");
+        File.WriteAllText(Path.Combine(ls57, "save.dat"), "NEW-v2-longer");
+        File.SetLastWriteTime(Path.Combine(ls57, "save.dat"), DateTime.Now.AddMinutes(-20));
+        var bakB57 = BackupService.Create(g57, "新进度B");
+        string prof57 = g57.ActiveProfile;
+        // 还原到旧档 A：指针移到 A（why=restore），live==A → same，次要标记数据齐备
+        BackupService.Restore(g57, bakA57);
+        var stOld57 = BackupService.GetLiveState(g57, prof57);
+        Check("心目中的档: 还旧档 → same + 指针=A + why=restore + MatchedAt=A",
+            stOld57.Kind == "same" && stOld57.FavoriteWhy == "restore"
+            && stOld57.MatchedAt == bakA57.SavedAt
+            && g57.SwitchAnchors[prof57] == bakA57.FileJson,
+            $"{stOld57.Kind}/{stOld57.FavoriteWhy}/{stOld57.MatchedAt:HH:mm:ss}/{bakA57.SavedAt:HH:mm:ss}");
+        // 无备份的路人玩家：nobackup（结构兼容位 RestoredAt 保持 default，不炸）
+        Check("心目中的档: 无备份玩家 → nobackup 且兼容位 RestoredAt=default",
+            BackupService.GetLiveState(g57, "路人57") is var stNone57
+            && stNone57.Kind == "nobackup" && stNone57.RestoredAt == default, "");
+        // 还原到最新档 B：same + restore + MatchedAt=B
+        BackupService.Restore(g57, bakB57);
+        var stNew57 = BackupService.GetLiveState(g57, prof57);
+        Check("心目中的档: 还最新档 → same + restore + MatchedAt=新备份存档时刻",
+            stNew57.Kind == "same" && stNew57.FavoriteWhy == "restore"
+            && stNew57.MatchedAt == bakB57.SavedAt, stNew57.Kind);
+        // 内部 Create（热快照/安全快照口径）不移动指针：新包 C 后指针仍停 B（restore），筹码如实报 changed
+        File.WriteAllText(Path.Combine(ls57, "save.dat"), "NEW-v3-even-longer-content");
+        File.SetLastWriteTime(Path.Combine(ls57, "save.dat"), DateTime.Now.AddMinutes(-10));
+        BackupService.Create(g57, "再玩后的备份C");
+        Check("心目中的档: 内部 Create 后指针不移动 → changed 且 why 仍为 restore",
+            BackupService.GetLiveState(g57, prof57) is var stC57
+            && stC57.Kind == "changed" && stC57.FavoriteWhy == "restore"
+            && g57.SwitchAnchors[prof57] == bakB57.FileJson, "");
+
+        // 接线守卫：VM 暴露次要标记属性
+        string srcRoot57 = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..", "src", "GameSaveManager"));
+        string gameEntryCs57 = File.ReadAllText(Path.Combine(srcRoot57, "Models", "GameEntry.cs"));
+        Check("双事实: ProfileSlotVm 暴露 RestoredTagText/SetRestoredTag",
+            gameEntryCs57.Contains("public string RestoredTagText")
+            && gameEntryCs57.Contains("public void SetRestoredTag"), "");
+        string mainCs57 = File.ReadAllText(Path.Combine(srcRoot57, "MainWindow.xaml.cs"));
+        Check("心目中的档: same+restore 分支按 why 落「↩ 已还原到」标记",
+            mainCs57.Contains("st.FavoriteWhy") && mainCs57.Contains("↩ 已还原到"), "");
+        string xaml57 = File.ReadAllText(Path.Combine(srcRoot57, "MainWindow.xaml"));
+        Check("双事实: XAML 绑定 RestoredTagText 且空值折叠",
+            xaml57.Contains("{Binding RestoredTagText}")
+            && xaml57.Contains("Visibility=\"{Binding RestoredTagText, Converter={StaticResource BlankToCollapsed}}\""), "");
+        // 玩家分区头部：标题与两段说明同行——短解释 + 窄窗口省略号兜底，绝不互相压住
+        // 注意必须锚定标题元素本身（同名文字在上方注释里也出现过一次）
+        int hdrStart57 = xaml57.IndexOf(">玩家存档与备份</TextBlock>");
+        string hdr57 = xaml57.Substring(hdrStart57,
+            xaml57.IndexOf("</Grid>", hdrStart57) - hdrStart57);
+        Check("双事实: 头部解释用玩家口吻短文案（旧长句已移除）",
+            hdr57.Contains("存档＝当前进度，备份＝可还原副本")
+            && !xaml57.Contains("存档＝游戏里的当前进度"), "");
+        Check("双事实: 头部解释与保留策略均有省略号兜底、PolicyText 悬停可看全文",
+            System.Text.RegularExpressions.Regex.Matches(hdr57, "TextTrimming=\"CharacterEllipsis\"").Count >= 2
+            && hdr57.Contains("ToolTip=\"{Binding DataContext.PolicyText"), "");
+        // 次要标记配色：未选中 Accent2，蓝底选中筹码上改浅绿（与状态行 good 态同色）
+        int tagStart57 = xaml57.IndexOf("Text=\"{Binding RestoredTagText}\"");
+        string tagBlock57 = xaml57.Substring(tagStart57,
+            xaml57.IndexOf("</TextBlock>", tagStart57) - tagStart57);
+        Check("双事实: 次要标记未选中走 Accent2、蓝底选中态浅绿 #8FE0B4",
+            tagBlock57.Contains("Value=\"{DynamicResource Accent2}\"")
+            && tagBlock57.Contains("Binding IsActive")
+            && tagBlock57.Contains("#8FE0B4"), "");
+        // 游玩状态提速：轮询 3s→1s；每轮只枚举一次全部进程（替代每游戏一次枚举）
+        Check("游玩提速: 监视轮询间隔 1 秒",
+            mainCs57.Contains("_watchTimer = new() { Interval = TimeSpan.FromSeconds(1) }"), "");
+        Check("游玩提速: 每轮只快照一次全部进程名",
+            mainCs57.Contains("var runningNames = new HashSet<string>")
+            && mainCs57.Contains("foreach (var p in Process.GetProcesses())"), "");
+    }
+
+    // ── 58. 切换玩家锚点：还原旧档后切换不打重复 zip、切回仍停旧档；新进度照打包；锚点失效回退；改名带锚点 ──
+    {
+        string ls58 = Path.Combine(temp, "switch_anchor58");
+        Directory.CreateDirectory(ls58);
+        string f58 = Path.Combine(ls58, "save.dat");
+        var g58 = new GameEntry { NameEN = "SwitchAnchor58" };
+        g58.SavePaths.Add(new SavePathEntry { Path = ls58 });
+
+        // 甲：旧档 A、新档 B（时间拉开；注意 CreatePlayer 首位玩家会自带「初始备份」=当前 live）
+        File.WriteAllText(f58, "甲旧档内容");
+        File.SetLastWriteTime(f58, DateTime.Now.AddMinutes(-30));
+        ProfileService.CreatePlayer(g58, "甲58");
+        var bakA58 = g58.Backups.Where(b => b.Profile == "甲58").OrderBy(b => b.Time).First();
+        File.WriteAllText(f58, "甲新档内容-更长");
+        File.SetLastWriteTime(f58, DateTime.Now.AddMinutes(-20));
+        var bakB58 = BackupService.Create(g58, "甲新进度");
+        // 乙玩家（CreatePlayer 会先给甲打包，live=B 零变化被吞）与她的备份
+        ProfileService.CreatePlayer(g58, "乙58");
+        File.WriteAllText(f58, "乙的专属进度");
+        File.SetLastWriteTime(f58, DateTime.Now.AddMinutes(-15));
+        var bakC58 = BackupService.Create(g58, "乙进度");
+        int Cnt58(string p) => g58.Backups.Count(b => b.Profile == p);
+
+        // 切到甲：乙 live 与她最新包一致 → 锚定 C，零新增；甲无锚点 → 还原最新 B
+        ProfileService.SwitchTo(g58, "甲58");
+        Check("切换锚点: 无变化切走只锚定不打包（乙仍 1 份）",
+            Cnt58("乙58") == 1 && File.ReadAllText(f58) == "甲新档内容-更长",
+            $"乙={Cnt58("乙58")},live={File.ReadAllText(f58)}");
+
+        // 甲手动还原到旧档 A（复现卡赞场景；同口径下安全快照因无变化跳过，甲仍 2 份）
+        BackupService.Restore(g58, bakA58);
+        Check("切换锚点: 手动还原旧档后 live=A 且份数未膨胀",
+            File.ReadAllText(f58) == "甲旧档内容" && Cnt58("甲58") == 2,
+            $"live={File.ReadAllText(f58)},甲={Cnt58("甲58")}");
+
+        // 关键：切到乙。旧逻辑会把 live(A) 当"新变化"再打一份冗余 zip；新逻辑命中已有 A → 只锚定
+        // （AnchorOnLeave 命中 A；SwitchTo 的 Restore 已关闭安全快照，不会再从 Restore 内部冒出重复包）
+        ProfileService.SwitchTo(g58, "乙58");
+        Check("切换锚点: 还原旧档后切走零冗余 zip（甲仍 2 份），锚点指向 A",
+            Cnt58("甲58") == 2
+            && g58.SwitchAnchors.TryGetValue("甲58", out var anchA58)
+            && anchA58 == bakA58.FileJson
+            && File.ReadAllText(f58) == "乙的专属进度",
+            $"甲={Cnt58("甲58")},锚点={(g58.SwitchAnchors.TryGetValue("甲58", out var v58) ? v58 : "<无>")}");
+
+        // 切回甲：锚点 A 生效（旧逻辑会选 Time 最新的 B，把玩家带回新档）
+        ProfileService.SwitchTo(g58, "甲58");
+        Check("切换锚点: 切回来仍停在手动选择的旧档 A（不被最新包 B 带回）",
+            File.ReadAllText(f58) == "甲旧档内容" && Cnt58("甲58") == 2 && Cnt58("乙58") == 1,
+            $"live={File.ReadAllText(f58)},甲={Cnt58("甲58")},乙={Cnt58("乙58")}");
+
+        // 甲玩出任何备份都没有的全新进度后切走：照常打包保进度，锚点指向新包
+        File.WriteAllText(f58, "甲玩出的全新结局内容");
+        File.SetLastWriteTime(f58, DateTime.Now.AddMinutes(-10));
+        ProfileService.SwitchTo(g58, "乙58");
+        var newPack58 = g58.Backups.Where(b => b.Profile == "甲58" && b.Note == "切换玩家")
+            .OrderByDescending(b => b.Time).FirstOrDefault();
+        Check("切换锚点: 真有新进度切走仍自动打包（甲 3 份）并锚定新包",
+            Cnt58("甲58") == 3 && newPack58 != null
+            && g58.SwitchAnchors.TryGetValue("甲58", out var anchD58) && anchD58 == newPack58.FileJson,
+            $"甲={Cnt58("甲58")}");
+        ProfileService.SwitchTo(g58, "甲58");
+        Check("切换锚点: 切回甲恢复她的全新进度",
+            File.ReadAllText(f58) == "甲玩出的全新结局内容", File.ReadAllText(f58));
+
+        // 锚点失效（zip 被 Prune 淘汰/损坏）：回退最新可还原包，不抛异常
+        g58.SwitchAnchors["甲58"] = "第一狂战士：不存在_1999.zip";
+        ProfileService.SwitchTo(g58, "乙58");
+        ProfileService.SwitchTo(g58, "甲58");
+        Check("切换锚点: 锚点包失效回退最新可还原包（live=甲全新进度）",
+            File.ReadAllText(f58) == "甲玩出的全新结局内容", File.ReadAllText(f58));
+
+        // 改名带锚点：键改名、值按 zip 文件名重映射
+        g58.SwitchAnchors["乙58"] = bakC58.FileJson;
+        ProfileService.RenamePlayer(g58, "乙58", "丙58");
+        Check("切换锚点: 玩家改名后锚点随迁（旧键消失、指向新记录）",
+            !g58.SwitchAnchors.ContainsKey("乙58")
+            && g58.SwitchAnchors.TryGetValue("丙58", out var anchC58)
+            && anchC58 == g58.Backups.First(b => b.Profile == "丙58").FileJson, "");
+
+        // JSON 往返：锚点随 games.json 持久化
+        var g58Round = System.Text.Json.JsonSerializer.Deserialize<GameEntry>(
+            System.Text.Json.JsonSerializer.Serialize(g58))!;
+        Check("切换锚点: SwitchAnchors 随 JSON 持久化往返",
+            g58Round.SwitchAnchors != null
+            && g58Round.SwitchAnchors.TryGetValue("甲58", out var ar58) && ar58.Length > 0
+            && g58Round.SwitchAnchors.ContainsKey("丙58"), "");
+
+        // 静态接线守卫
+        string srcRoot58 = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..", "src", "GameSaveManager"));
+        string profCs58 = File.ReadAllText(Path.Combine(srcRoot58, "Services", "ProfileService.cs"));
+        Check("切换锚点: SwitchTo 经 AnchorOnLeave/PickSwitchTarget 走锚点",
+            profCs58.Contains("BackupService.FindSnapshotMatchingLive(g, leaving)")
+            && profCs58.Contains("var target = PickSwitchTarget(g, name)"), "");
+        string bkCs58 = File.ReadAllText(Path.Combine(srcRoot58, "Services", "BackupService.cs"));
+        Check("切换锚点: 玩家切换的 Restore 关闭安全快照（冗余包真正源头）",
+            bkCs58.Contains("bool safetySnapshot = true")
+            && profCs58.Contains("targetPaths: EffectivePaths(g), safetySnapshot: false"), "");
+        string entryCs58 = File.ReadAllText(Path.Combine(srcRoot58, "Models", "GameEntry.cs"));
+        Check("切换锚点: GameEntry 持久化 SwitchAnchors",
+            entryCs58.Contains("public Dictionary<string, string> SwitchAnchors"), "");
+    }
+
+    // ── 59. 心目中的存档：认可动作移指针（init/manual/auto/switch/restore）、筹码以指针为基准、
+    //       行感叹号打标、Prune 豁免指针包、悬空回退、改名/删除随迁、RestoredMarks 启动迁移 ──
+    {
+        string vault59 = Path.Combine(temp, "vault59");
+        Store.HomeDirOverride = vault59;
+        Store.Init();
+        int svMax59 = Store.Settings.MaxKeepPerGame;
+        bool svInc59 = Store.Settings.IncrementalEnabled;
+        Store.Settings.IncrementalEnabled = false;
+        Store.Settings.MaxKeepPerGame = 10;
+
+        // 59.A 主游戏：指针随五种认可动作移动
+        string ls59 = Path.Combine(temp, "fav_live59");
+        Directory.CreateDirectory(ls59);
+        string f59 = Path.Combine(ls59, "save.dat");
+        var g59 = new GameEntry { NameEN = "Favorite59" };
+        g59.SavePaths.Add(new SavePathEntry { Path = ls59 });
+        const string P59 = "主角59";
+
+        File.WriteAllText(f59, "fav-v1");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-30));
+        ProfileService.CreatePlayer(g59, P59);
+        var z1_59 = g59.Backups.OrderBy(b => b.Time).First();
+        Check("心目中的档: 首位玩家建卡 → 指针=初始包 why=init，筹码 same",
+            g59.SwitchAnchors.TryGetValue(P59, out var a1_59) && a1_59 == z1_59.FileJson
+            && g59.FavoriteWhy.TryGetValue(P59, out var w1_59) && w1_59 == "init"
+            && BackupService.GetLiveState(g59, P59).Kind == "same", "");
+
+        File.WriteAllText(f59, "fav-v2-longer");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-20));
+        var z2_59 = ProfileService.BackupAsFavorite(g59, "手动备份", false, "manual", out _);
+        Check("心目中的档: 手动备份 → 指针移到新包 why=manual，same",
+            g59.SwitchAnchors[P59] == z2_59.FileJson && g59.FavoriteWhy[P59] == "manual"
+            && BackupService.GetLiveState(g59, P59).Kind == "same", "");
+
+        bool noChange59 = false;
+        try { ProfileService.BackupAsFavorite(g59, "没变化的手动备份", false, "manual", out _); }
+        catch (InvalidOperationException ex) { noChange59 = ex.Message.Contains("没有变化"); }
+        Check("心目中的档: 手动备份报无变化 → 异常照抛且指针落最新可还原包（不悬空）",
+            noChange59 && g59.SwitchAnchors[P59] == z2_59.FileJson
+            && g59.FavoriteWhy[P59] == "manual", "");
+
+        // 英灵神殿真实场景：刚手动备份（why=manual），退出游戏自动备份发现无变化（why=auto）
+        // → 没有新认可动作，指针与 why 都保持 manual，不被改写成 auto
+        bool noChangeAuto59 = false;
+        try { ProfileService.BackupAsFavorite(g59, "已退出，自动备份", false, "auto", out _); }
+        catch (InvalidOperationException ex) { noChangeAuto59 = ex.Message.Contains("没有变化"); }
+        Check("心目中的档: 无变化且指针已在该包 → 保留原 why（手动备份后退出不被改写成 auto）",
+            noChangeAuto59 && g59.SwitchAnchors[P59] == z2_59.FileJson
+            && g59.FavoriteWhy[P59] == "manual", "");
+
+        // 指针指在旧包（如她刚还原了旧档、live 却与最新包一致）时无变化 → 仍兜底回到最新可还原包
+        ProfileService.MarkFavorite(g59, P59, z1_59.FileJson, "restore");
+        bool noChangeFallback59 = false;
+        try { ProfileService.BackupAsFavorite(g59, "已退出，自动备份", false, "auto", out _); }
+        catch (InvalidOperationException ex) { noChangeFallback59 = ex.Message.Contains("没有变化"); }
+        Check("心目中的档: 无变化但指针指在旧包 → 兜底回到最新可还原包 why=auto",
+            noChangeFallback59 && g59.SwitchAnchors[P59] == z2_59.FileJson
+            && g59.FavoriteWhy[P59] == "auto", "");
+
+        File.WriteAllText(f59, "fav-v3-even-longer");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-10));
+        var z3_59 = ProfileService.BackupAsFavorite(g59, "退出游戏自动备份", false, "auto", out _);
+        Check("心目中的档: 退出自动备份 → 指针移到新包 why=auto，same",
+            g59.SwitchAnchors[P59] == z3_59.FileJson && g59.FavoriteWhy[P59] == "auto"
+            && BackupService.GetLiveState(g59, P59).Kind == "same", "");
+
+        // 运行中热快照走内部 Create 口径：不移动指针
+        File.WriteAllText(f59, "fav-v3b-hotshot");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-9));
+        var zHot59 = BackupService.Create(g59, "运行中热快照", hot: true, out int skippedHot59);
+        Check("心目中的档: 运行中热快照成功但指针不动（仍 why=auto 停在退出备份包）",
+            zHot59.Hot && g59.SwitchAnchors[P59] == z3_59.FileJson
+            && g59.FavoriteWhy[P59] == "auto", $"skipped={skippedHot59}");
+
+        // 手动还原首包 → 指针回到旧档 why=restore、same；同次核对接行感叹号
+        BackupService.Restore(g59, z1_59);
+        var stFav59 = BackupService.GetLiveState(g59, P59);
+        Check("心目中的档: 手动还原 → 指针=还原目标 why=restore，live==指针 same",
+            stFav59.Kind == "same" && stFav59.FavoriteWhy == "restore"
+            && stFav59.MatchedAt == z1_59.SavedAt && g59.SwitchAnchors[P59] == z1_59.FileJson, "");
+        BackupService.ApplyNewerThanLiveFlags(g59.Backups, stFav59);
+        BackupRecord Row59(string fj) => g59.Backups.First(b => b.FileJson == fj);
+        Check("心目中的档: 行感叹号——指针包不亮、更新的备份亮，提示含新于当前存档",
+            !Row59(z1_59.FileJson).IsNewerThanLive && Row59(z1_59.FileJson).NewerThanLiveTip == ""
+            && Row59(z2_59.FileJson).IsNewerThanLive && Row59(z3_59.FileJson).IsNewerThanLive
+            && Row59(zHot59.FileJson).IsNewerThanLive
+            && Row59(z3_59.FileJson).NewerThanLiveTip.Contains("新于当前存档"), "");
+        BackupService.ApplyNewerThanLiveFlags(g59.Backups, null);
+        Check("心目中的档: st=null（游玩中）统一清标",
+            g59.Backups.All(b => !b.IsNewerThanLive && b.NewerThanLiveTip == ""), "");
+        File.Delete(f59);
+        var stEmpty59 = BackupService.GetLiveState(g59, P59);
+        BackupService.ApplyNewerThanLiveFlags(g59.Backups, stEmpty59);
+        Check("心目中的档: live 为空 → nosave，全部行亮感叹号且提示存档目录为空",
+            stEmpty59.Kind == "nosave" && Row59(z1_59.FileJson).IsNewerThanLive
+            && Row59(z2_59.FileJson).NewerThanLiveTip.Contains("存档目录为空"), stEmpty59.Kind);
+
+        // live 比指针旧 → older；玩出更新进度 → changed
+        File.WriteAllText(f59, "fav-v1");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-40));
+        Check("心目中的档: live 早于指针包 → older + BackupLatest=指针时间",
+            BackupService.GetLiveState(g59, P59) is var stOlder59
+            && stOlder59.Kind == "older"
+            && Math.Abs((stOlder59.BackupLatest - z1_59.SavedAt).TotalSeconds) < 2, stOlder59.Kind);
+        File.WriteAllText(f59, "fav-v4-brand-new");
+        File.SetLastWriteTime(f59, DateTime.Now.AddMinutes(-5));
+        Check("心目中的档: live 新于指针包 → changed",
+            BackupService.GetLiveState(g59, P59).Kind == "changed", "");
+
+        // 切走锚定 why=switch；切回还原指针包承载的内容
+        ProfileService.CreatePlayer(g59, "伙伴59");
+        Check("心目中的档: 新建第二名玩家 → 离开者指针 why=switch",
+            g59.FavoriteWhy.TryGetValue(P59, out var whyLeave59) && whyLeave59 == "switch", "");
+        ProfileService.SwitchTo(g59, P59);
+        Check("心目中的档: 切回主角还原她指针包承载的内容",
+            File.ReadAllText(f59) == "fav-v4-brand-new", File.ReadAllText(f59));
+
+        // 59.B 无指针/悬空指针：ResolveFavorite 回退最新可还原包
+        string fbLive59 = Path.Combine(temp, "fav_fallback59");
+        Directory.CreateDirectory(fbLive59);
+        string fbf59 = Path.Combine(fbLive59, "save.dat");
+        var gFb59 = new GameEntry { NameEN = "FavFallback59" };
+        gFb59.SavePaths.Add(new SavePathEntry { Path = fbLive59 });
+        foreach (var (txt, mins) in new[] { ("fb-v1", -30), ("fb-v2-long", -20), ("fb-v3-longer", -10) })
+        {
+            File.WriteAllText(fbf59, txt);
+            File.SetLastWriteTime(fbf59, DateTime.Now.AddMinutes(mins));
+            BackupService.Create(gFb59, txt);
+        }
+        string profFb59 = gFb59.ActiveProfile;
+        var latestFb59 = gFb59.Backups.Where(b => BackupService.IsRestorable(gFb59, b))
+            .OrderByDescending(b => b.Time).First();
+        var favFb59 = ProfileService.ResolveFavorite(gFb59, profFb59, out var whyFb59);
+        Check("心目中的档: 无指针 → 回退最新可还原包 + why=fallback",
+            favFb59 != null && favFb59.FileJson == latestFb59.FileJson && whyFb59 == "fallback",
+            whyFb59 ?? "<null>");
+        gFb59.SwitchAnchors[profFb59] = "不存在的幽灵包_1999.zip";
+        var favDangle59 = ProfileService.ResolveFavorite(gFb59, profFb59, out _);
+        Check("心目中的档: 悬空指针不抛异常、回退最新可还原包",
+            favDangle59 != null && favDangle59.FileJson == latestFb59.FileJson, "");
+
+        // 59.C Prune：指针包与锁并列豁免、不占保留配额
+        Store.Settings.MaxKeepPerGame = 3;
+        string prLive59 = Path.Combine(temp, "fav_prune59");
+        Directory.CreateDirectory(prLive59);
+        string prf59 = Path.Combine(prLive59, "save.dat");
+        var gPr59 = new GameEntry { NameEN = "FavPrune59" };
+        gPr59.SavePaths.Add(new SavePathEntry { Path = prLive59 });
+        File.WriteAllText(prf59, "pr-v1");
+        File.SetLastWriteTime(prf59, DateTime.Now.AddMinutes(-40));
+        ProfileService.CreatePlayer(gPr59, "留档59");
+        var pz1_59 = gPr59.Backups.Single(b => b.Profile == "留档59");
+        BackupRecord? pz2_59 = null;
+        int idxPr59 = 2;
+        foreach (var (txt, mins) in new[] {
+            ("pr-v2-long", -30), ("pr-v3-longer", -20), ("pr-v4-longerr", -15), ("pr-v5-longerrr", -10) })
+        {
+            File.WriteAllText(prf59, txt);
+            File.SetLastWriteTime(prf59, DateTime.Now.AddMinutes(mins));
+            var recPr = BackupService.Create(gPr59, "第" + idxPr59 + "份");
+            if (idxPr59 == 2) pz2_59 = recPr;
+            idxPr59++;
+        }
+        var pzLast59 = gPr59.Backups.OrderByDescending(b => b.Time).First();
+        Check("心目中的档: Prune 超配额淘汰旧包但豁免指针包（z1 存活、z2 淘汰、总数 4）",
+            gPr59.Backups.Count == 4
+            && gPr59.Backups.Any(b => b.FileJson == pz1_59.FileJson) && File.Exists(pz1_59.File)
+            && !gPr59.Backups.Any(b => b.FileJson == pz2_59!.FileJson) && !File.Exists(pz2_59!.File)
+            && gPr59.Backups.Any(b => b.FileJson == pzLast59.FileJson),
+            $"n={gPr59.Backups.Count}");
+
+        // 59.D 启动迁移 BackfillFavorite：旧还原标记 ±2s 命中→restore；找不到→二次回填最新；幂等
+        GameEntry NewMigGame59(string en, string liveDir, string file,
+            params (string txt, int mins)[] snaps)
+        {
+            Directory.CreateDirectory(liveDir);
+            var gg = new GameEntry { NameEN = en };
+            gg.SavePaths.Add(new SavePathEntry { Path = liveDir });
+            foreach (var (txt, mins) in snaps)
+            {
+                File.WriteAllText(file, txt);
+                File.SetLastWriteTime(file, DateTime.Now.AddMinutes(mins));
+                BackupService.Create(gg, txt);
+            }
+            return gg;
+        }
+        string profMig59 = ProfileService.DefaultFirstPlayerName;
+        var gMA59 = NewMigGame59("FavMigA59", Path.Combine(temp, "fav_migA59"),
+            Path.Combine(temp, "fav_migA59", "save.dat"), ("ma-v1", -30));
+        var bMA59 = gMA59.Backups.Single();
+        gMA59.RestoredMarks[profMig59] = bMA59.SavedAt;
+        var gMB59 = NewMigGame59("FavMigB59", Path.Combine(temp, "fav_migB59"),
+            Path.Combine(temp, "fav_migB59", "save.dat"), ("mb-v1", -30), ("mb-v2-long", -20));
+        var bMB2_59 = gMB59.Backups.OrderByDescending(b => b.Time).First();
+        gMB59.RestoredMarks[profMig59] = DateTime.Now.AddDays(-9);   // 库里没有对应包
+        var gMC59 = NewMigGame59("FavMigC59", Path.Combine(temp, "fav_migC59"),
+            Path.Combine(temp, "fav_migC59", "save.dat"), ("mc-v1", -30));
+        var bMC59 = gMC59.Backups.Single();
+        var gMD59 = NewMigGame59("FavMigD59", Path.Combine(temp, "fav_migD59"),
+            Path.Combine(temp, "fav_migD59", "save.dat"), ("md-v1", -30), ("md-v2-long", -20));
+        var dOld59 = gMD59.Backups.OrderBy(b => b.Time).First();
+        gMD59.SwitchAnchors[profMig59] = dOld59.FileJson;   // 有效指针但缺 why
+        Store.Games.Add(gMA59); Store.Games.Add(gMB59);
+        Store.Games.Add(gMC59); Store.Games.Add(gMD59);
+        Store.Save();
+        ProfileService.BackfillFavorite();
+        ProfileService.BackfillFavorite();
+        Check("心目中的档: 迁移①旧还原标记命中现存包 → 指针=该包 why=restore，旧字段清空",
+            gMA59.SwitchAnchors.TryGetValue(profMig59, out var anMA59) && anMA59 == bMA59.FileJson
+            && gMA59.FavoriteWhy[profMig59] == "restore" && gMA59.RestoredMarks.Count == 0, "");
+        Check("心目中的档: 迁移②标记找不到对应包 → 二遍回填最新包 why=空，不拿新包冒认还原",
+            gMB59.SwitchAnchors.TryGetValue(profMig59, out var anMB59) && anMB59 == bMB2_59.FileJson
+            && gMB59.FavoriteWhy[profMig59] == "" && gMB59.RestoredMarks.Count == 0, "");
+        Check("心目中的档: 迁移③无标记无指针 → 最新可还原包 why=空",
+            gMC59.SwitchAnchors[profMig59] == bMC59.FileJson && gMC59.FavoriteWhy[profMig59] == "", "");
+        Check("心目中的档: 迁移④有效指针保留、只补 why=空（不改指她的选择）",
+            gMD59.SwitchAnchors[profMig59] == dOld59.FileJson && gMD59.FavoriteWhy[profMig59] == "", "");
+        string gamesFile59 = Path.Combine(vault59, "games.json");
+        string hashMig2 = FileFingerprint(gamesFile59);
+        ProfileService.BackfillFavorite();
+        Check("心目中的档: 迁移第三遍无副作用（不再落盘，全部 RestoredMarks 已空）",
+            FileFingerprint(gamesFile59) == hashMig2
+            && Store.Games.All(g => g.RestoredMarks == null || g.RestoredMarks.Count == 0), "");
+
+        // 59.E 改名 why 随迁、删玩家清两字典
+        string rnLive59 = Path.Combine(temp, "fav_rename59");
+        Directory.CreateDirectory(rnLive59);
+        string rnf59 = Path.Combine(rnLive59, "save.dat");
+        var gRn59 = new GameEntry { NameEN = "FavRename59" };
+        gRn59.SavePaths.Add(new SavePathEntry { Path = rnLive59 });
+        File.WriteAllText(rnf59, "rn-甲1");
+        File.SetLastWriteTime(rnf59, DateTime.Now.AddMinutes(-30));
+        ProfileService.CreatePlayer(gRn59, "甲59r");
+        ProfileService.CreatePlayer(gRn59, "乙59r");
+        File.WriteAllText(rnf59, "rn-乙1-long");
+        File.SetLastWriteTime(rnf59, DateTime.Now.AddMinutes(-20));
+        var bYi59 = BackupService.Create(gRn59, "乙进度");
+        ProfileService.MarkFavorite(gRn59, "乙59r", bYi59.FileJson, "manual");
+        ProfileService.RenamePlayer(gRn59, "乙59r", "丙59r");
+        Check("心目中的档: 改名 → 指针与 why 随迁、旧键清空",
+            !gRn59.SwitchAnchors.ContainsKey("乙59r") && !gRn59.FavoriteWhy.ContainsKey("乙59r")
+            && gRn59.SwitchAnchors.TryGetValue("丙59r", out var anC59)
+            && anC59 == gRn59.Backups.First(b => b.Profile == "丙59r").FileJson
+            && gRn59.FavoriteWhy["丙59r"] == "manual", "");
+        ProfileService.DeletePlayer(gRn59, "丙59r");
+        Check("心目中的档: 删玩家 → 指针与 why 一并移除",
+            !gRn59.SwitchAnchors.ContainsKey("丙59r")
+            && !gRn59.FavoriteWhy.ContainsKey("丙59r"), "");
+
+        // 59.F 静态接线守卫
+        string srcRoot59 = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..", "src", "GameSaveManager"));
+        string entryCs59 = File.ReadAllText(Path.Combine(srcRoot59, "Models", "GameEntry.cs"));
+        Check("心目中的档: GameEntry 持久化 FavoriteWhy、行标记运行时属性 IsNewerThanLive",
+            entryCs59.Contains("public Dictionary<string, string> FavoriteWhy")
+            && entryCs59.Contains("public bool IsNewerThanLive"), "");
+        string xaml59 = File.ReadAllText(Path.Combine(srcRoot59, "MainWindow.xaml"));
+        Check("心目中的档: 备份行橙色感叹号（锁按钮前/绑定打标/Orange 填充/Material 图形）",
+            xaml59.Contains("IsNewerThanLive, Converter={StaticResource BoolToVis}")
+            && xaml59.Contains("ToolTip=\"{Binding NewerThanLiveTip}\"")
+            && xaml59.Contains("Fill=\"{DynamicResource Orange}\"")
+            && xaml59.Contains("M12 2C6.48 2"), "");
+        string profCs59 = File.ReadAllText(Path.Combine(srcRoot59, "Services", "ProfileService.cs"));
+        Check("心目中的档: 认可动作写入口/锚定/解析/迁移公开接线齐全",
+            profCs59.Contains("public static BackupRecord BackupAsFavorite")
+            && profCs59.Contains("public static void MarkFavorite")
+            && profCs59.Contains("public static void AnchorOnLeave")
+            && profCs59.Contains("public static void BackfillFavorite")
+            && profCs59.Contains("MarkFavorite(g, leaving, matched.FileJson, \"switch\")"), "");
+        string svcCs59 = File.ReadAllText(Path.Combine(srcRoot59, "Services", "BackupService.cs"));
+        Check("心目中的档: Prune 豁免指针包 + 行感叹号打标函数在 BackupService",
+            svcCs59.Contains("favFiles")
+            && svcCs59.Contains("b.Locked || favFiles.Contains(b.File)")
+            && svcCs59.Contains("public static void ApplyNewerThanLiveFlags"), "");
+        string mainCs59 = File.ReadAllText(Path.Combine(srcRoot59, "MainWindow.xaml.cs"));
+        Check("心目中的档: 筹码核对后同步打标 + older 点击还原指针包 + 文案接线",
+            mainCs59.Contains("BackupService.ApplyNewerThanLiveFlags(g.VisibleBackups, running ? null : st)")
+            && mainCs59.Contains("\"restoreFavorite\"")
+            && mainCs59.Contains("ProfileService.ResolveFavorite(g, profile, out _)")
+            && mainCs59.Contains("心目中的档"), "");
+
+        Store.Settings.MaxKeepPerGame = svMax59;
+        Store.Settings.IncrementalEnabled = svInc59;
+    }
 
     Store.HomeDirOverride = null;
 }

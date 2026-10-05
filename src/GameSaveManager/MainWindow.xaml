@@ -492,10 +492,28 @@
                                 BorderThickness="1" CornerRadius="12" Margin="0,0,0,16">
                             <StackPanel>
                                 <Grid Margin="16,4,16,2">
-                                    <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}">玩家存档与备份</TextBlock>
-                                    <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="11.5"
-                                               Foreground="{DynamicResource TextSecondary}"
-                                               Text="{Binding DataContext.PolicyText, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                               FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}">玩家存档与备份</TextBlock>
+                                    <!-- 右侧整体右贴：弹性空位在前；空间不够时空位先归零，两段说明再各自省略号兜底（悬停看全文），绝不压上左侧标题 -->
+                                    <Grid Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="1" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
+                                                   VerticalAlignment="Center" Margin="0,0,10,0"
+                                                   Text="存档＝当前进度，备份＝可还原副本" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="存档：游戏目录中正在读写的原文件，你玩到哪儿它就在那儿&#10;备份：本软件把存档打包保存的副本，游戏存档损坏或想回档时可随时还原"/>
+                                        <TextBlock Grid.Column="2" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding DataContext.PolicyText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                   ToolTip="{Binding DataContext.PolicyText, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                    </Grid>
                                 </Grid>
 
                                 <!-- Steam 云同步游戏：禁用玩家档案（紧凑徽章，详情在悬停提示里；备份功能不受影响） -->
@@ -584,7 +602,7 @@
                                                                                     <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
                                                                                 </DataTrigger>
                                                                                 <!-- 可点链接加下划线 -->
-                                                                                <DataTrigger Binding="{Binding StatusAction}" Value="restoreLocal">
+                                                                                <DataTrigger Binding="{Binding StatusAction}" Value="restoreFavorite">
                                                                                     <Setter Property="TextDecorations" Value="Underline"/>
                                                                                 </DataTrigger>
                                                                                 <DataTrigger Binding="{Binding StatusAction}" Value="restoreCloud">
@@ -625,6 +643,23 @@
                                                                     </TextBlock.Style>
                                                                 </TextBlock>
                                                             </Button>
+                                                            <!-- 次要事实标记：还旧档后在状态行旁保留「刚还原到的存档时间」痕迹；
+                                                                 蓝底选中筹码上用浅色（与状态行 good 态同一套浅绿），未选中走 Accent2 -->
+                                                            <TextBlock Text="{Binding RestoredTagText}" ToolTip="{Binding RestoredTagTip}"
+                                                                       FontSize="9.5" Margin="8,0,8,2" MaxWidth="152"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Visibility="{Binding RestoredTagText, Converter={StaticResource BlankToCollapsed}}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="{DynamicResource Accent2}"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#8FE0B4"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
                                                         </StackPanel>
                                                     </Button>
                                                 </DataTemplate>
@@ -726,6 +761,17 @@
                                                                        Visibility="{Binding BackupTimeText, Converter={StaticResource BlankToCollapsed}}"/>
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="3" Orientation="Horizontal">
+                                                            <!-- 橙色感叹号：这份备份的存档时间新于当前 live（典型：手动还原到旧档后，
+                                                                 库里更新的备份逐行提示）；纯指示不可单独操作，悬停看两个存档时间，点击冒泡给整行。
+                                                                 槽位固定 15+6=21px 常驻（图标折叠、槽位不塌），保证各行时间戳右缘对齐 -->
+                                                            <Border Width="15" Margin="0,0,6,0" VerticalAlignment="Center" Background="Transparent"
+                                                                    ToolTip="{Binding NewerThanLiveTip}">
+                                                                <Viewbox Width="15" Height="15"
+                                                                         Visibility="{Binding IsNewerThanLive, Converter={StaticResource BoolToVis}}">
+                                                                    <Path Fill="{DynamicResource Orange}"
+                                                                          Data="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                                                                </Viewbox>
+                                                            </Border>
                                                             <!-- 矢量实心锁（WPF 不支持 emoji 彩色字形，故用 Path 真涂色）：
                                                                  未锁=灰、锁定=金；Data 为 24x24 Material 实心锁/开锁轮廓 -->
                                                             <Button Style="{StaticResource BtnSm}" Margin="0,0,6,0" Click="OnToggleLock"
