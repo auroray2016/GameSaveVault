@@ -187,12 +187,15 @@
                                                  To="1.02" Duration="0:0:0.28"/>
                                 <DoubleAnimation Storyboard.TargetName="CardLift" Storyboard.TargetProperty="Y"
                                                  To="-3" Duration="0:0:0.28"/>
+                                <!-- 性能：BlurRadius/ShadowDepth 瞬时定终值（Duration=0），整段悬停只动画 Opacity 淡入。
+                                     模糊半径逐帧变化会每帧在 CPU 上重新高斯模糊整张卡片，是悬停掉帧主因；
+                                     半径恒定时模糊结果可缓存复用，视觉上只是少了几乎不可察的"扩散"感。 -->
                                 <DoubleAnimation Storyboard.TargetName="CardShadow"
                                                  Storyboard.TargetProperty="(DropShadowEffect.BlurRadius)"
-                                                 To="8" Duration="0:0:0.28"/>
+                                                 To="8" Duration="0:0:0"/>
                                 <DoubleAnimation Storyboard.TargetName="CardShadow"
                                                  Storyboard.TargetProperty="(DropShadowEffect.ShadowDepth)"
-                                                 To="5" Duration="0:0:0.28"/>
+                                                 To="5" Duration="0:0:0"/>
                                 <DoubleAnimation Storyboard.TargetName="CardShadow"
                                                  Storyboard.TargetProperty="(DropShadowEffect.Opacity)"
                                                  To="0.55" Duration="0:0:0.28"/>
@@ -208,7 +211,7 @@
                 <Border x:Name="ShadowHost" Background="Transparent">
                     <Border.Effect>
                         <DropShadowEffect x:Name="CardShadow" Color="{DynamicResource ShadowColor}" Direction="270"
-                                          BlurRadius="0" ShadowDepth="0" Opacity="0.05" RenderingBias="Quality"/>
+                                          BlurRadius="0" ShadowDepth="0" Opacity="0.05" RenderingBias="Performance"/>
                     </Border.Effect>
 
                     <!-- Margin 即原 3D 方案的安全留白/卡间距（上下各 3px，相邻卡视觉缝隙 6px）；
@@ -267,9 +270,27 @@
                             </Grid>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,4,0" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold"
-                                       Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"
-                                       ToolTip="{Binding DisplayName}"/>
+                            <!-- 名字 + 完结小奖杯：Auto/Auto 两列，长名字省略号收缩、奖杯恒完整紧贴其右（水平 StackPanel 会让省略号失效） -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding DisplayName}"/>
+                                <Viewbox Grid.Column="1" Width="12.5" Height="12.5" Margin="5,0,0,0"
+                                         VerticalAlignment="Center"
+                                         Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}"
+                                         ToolTip="已完结">
+                                    <!-- 与完结纪念卡同一只手绘金杯；单色淡金（深色淡金/浅色自动转深古铜） -->
+                                    <Path Data="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.41 5 9.31 5 8zm14 0c0 1.31-.84 2.41-2 2.82V7h2v1z">
+                                        <Path.Fill>
+                                            <SolidColorBrush Color="{DynamicResource MemorialGoldLo}"/>
+                                        </Path.Fill>
+                                    </Path>
+                                </Viewbox>
+                            </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                                 <Border Style="{StaticResource Badge}">
                                     <TextBlock Style="{StaticResource BadgeText}" Text="{Binding TypeBadge}"/>
@@ -390,35 +411,64 @@
                                 </Grid>
                             </Border>
                             <StackPanel Margin="16,0,0,0" VerticalAlignment="Bottom">
+                                <!-- 横幅底部恒叠黑色压暗遮罩（见上方 #EE000000 渐变），任何主题/封面下都是暗底，
+                                     故标题区文字固定浅色、不绑主题色，否则浅色主题下深字压暗底看不清 -->
+                                <!-- 范例：游戏名黑色包围光晕（ShadowDepth=0 四周均匀、Blur=5），亮暗封面都能托住字 -->
                                 <TextBlock Text="{Binding DisplayName}" FontSize="22" FontWeight="Bold"
-                                           Foreground="{DynamicResource TextPrimary}"/>
+                                           Foreground="#F5F7FA">
+                                    <TextBlock.Effect>
+                                        <DropShadowEffect Color="#000000" BlurRadius="5" ShadowDepth="0"
+                                                          Opacity="0.9"/>
+                                    </TextBlock.Effect>
+                                </TextBlock>
                                 <TextBlock Text="{Binding SubName}" FontSize="12.5"
-                                           Foreground="{DynamicResource TextSecondary}" Margin="0,3,0,0"
-                                           TextTrimming="CharacterEllipsis"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Border Style="{StaticResource Badge}">
+                                           Foreground="#C3C9D5" Margin="0,3,0,0"
+                                           TextTrimming="CharacterEllipsis">
+                                    <!-- 副标题配淡一档的同款黑色光晕 -->
+                                    <TextBlock.Effect>
+                                        <DropShadowEffect Color="#000000" BlurRadius="4" ShadowDepth="0"
+                                                          Opacity="0.7"/>
+                                    </TextBlock.Effect>
+                                </TextBlock>
+                                <!-- 窄窗口/侧栏拖宽时自动换行，末尾按钮不再被挤出横幅；子项统一垂直居中 -->
+                                <WrapPanel Margin="0,8,0,0" Orientation="Horizontal">
+                                    <Border Style="{StaticResource Badge}" VerticalAlignment="Center" Margin="0,0,0,6">
                                         <TextBlock Style="{StaticResource BadgeText}" Text="{Binding TypeBadge}"/>
                                     </Border>
-                                    <Border Style="{StaticResource Badge}" Margin="8,0,0,0">
+                                    <Border Style="{StaticResource Badge}" Margin="8,0,0,6" VerticalAlignment="Center">
                                         <TextBlock Style="{StaticResource BadgeText}" Text="{Binding BackupCountText}"
-                                                   Foreground="{DynamicResource TextSecondary}"/>
+                                                   Foreground="#D6DBE5"/>
                                     </Border>
                                     <Button Style="{StaticResource BtnPrimary}" FontSize="12.5" Padding="14,4"
-                                            Content="▶ 运行游戏" x:Name="BtnRun" Margin="10,0,0,0" VerticalAlignment="Center"
+                                            Content="▶ 运行游戏" x:Name="BtnRun" Margin="10,0,6,6" VerticalAlignment="Center"
                                             Click="OnRunGame"
                                             ToolTip="启动游戏：Steam 游戏通过 Steam 启动，学习版直接运行 exe（双击列表项同样可运行）"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="✎ 编辑" VerticalAlignment="Center"
+                                    <Button Style="{StaticResource BtnSm}" Content="✎ 编辑" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnEditGame"
                                             ToolTip="编辑中英文名称、封面、图标、AppId 和游戏 exe"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="📊 游玩详情" VerticalAlignment="Center"
+                                    <Button Style="{StaticResource BtnSm}" Content="📊 游玩详情" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnShowPlayStats"
                                             ToolTip="查看导入日期、游玩总时长、最后关闭时间和历次会话记录"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="移除游戏" VerticalAlignment="Center"
+                                    <!-- 完结馆入口：未完结→一键标记当天；已完结→绿色态，点击出「改日期/取消」菜单 -->
+                                    <Button Style="{StaticResource BtnSm}" x:Name="BtnMarkCompleted" Content="🏆 完结撒花"
+                                            VerticalAlignment="Center" Margin="0,0,6,6" Click="OnMarkCompleted"
+                                            Visibility="{Binding IsCompleted, Converter={StaticResource InverseBoolToVis}}"
+                                            ToolTip="通关了？把这款游戏收入完结馆（日期记为今天，之后可补改）"/>
+                                    <Button Style="{StaticResource BtnSm}" x:Name="BtnCompletedDone" VerticalAlignment="Center"
+                                            Margin="0,0,6,6" Click="OnCompletedDoneClick"
+                                            Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}"
+                                            ToolTip="点击可修改完结日期或取消完结">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="✓ 已完结 · " Foreground="{DynamicResource Green}"/>
+                                            <TextBlock Text="{Binding CompletedShortText}" Foreground="{DynamicResource Green}"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource BtnSm}" Content="移除游戏" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnRemoveGame"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="自动获取" Margin="10,0,0,0"
+                                    <Button Style="{StaticResource BtnSm}" Content="自动获取" Margin="10,0,0,6"
                                             VerticalAlignment="Center" Click="OnRefreshRules"
                                             ToolTip="强制联网刷新 Wiki 存档规则，并重跑本地规则（rules.json），自动获取存档目录"/>
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
                         </StackPanel>
                     </Grid>
@@ -430,15 +480,24 @@
                             <StackPanel>
                                 <!-- 标题留白与下方「玩家存档与备份」分区一致：上 4、底 7 到分隔线 -->
                                 <Grid Margin="16,4,16,7">
-                                    <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis">
                                         <Run Text="存档位置（"/><Run Text="{Binding SavePaths.Count, Mode=OneWay}"/><Run Text="）"/>
                                     </TextBlock>
-                                    <Button Style="{StaticResource BtnSm}" Content="⚠ Wiki 获取失败 · 点击重试" HorizontalAlignment="Right" Margin="0,0,104,0"
-                                            Foreground="{DynamicResource Red}" Visibility="{Binding WikiFailed, Converter={StaticResource BoolToVis}}"
-                                            Click="OnWikiRetry"
-                                            ToolTip="Wiki 规则联网获取失败（缓存也无数据）。点击强制重试，成功后会自动补充存档路径"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="＋ 添加路径" HorizontalAlignment="Right"
-                                            Click="OnAddSavePath"/>
+                                    <!-- 窄窗口时标题省略，两按钮始终右贴且自然排列，不再用硬编码 104 让位 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource BtnSm}" Content="⚠ Wiki 获取失败 · 点击重试"
+                                                Foreground="{DynamicResource Red}" Margin="0,0,8,0"
+                                                Visibility="{Binding WikiFailed, Converter={StaticResource BoolToVis}}"
+                                                Click="OnWikiRetry"
+                                                ToolTip="Wiki 规则联网获取失败（缓存也无数据）。点击强制重试，成功后会自动补充存档路径"/>
+                                        <Button Style="{StaticResource BtnSm}" Content="＋ 添加路径"
+                                                Click="OnAddSavePath"/>
+                                    </StackPanel>
                                 </Grid>
                                 <ItemsControl ItemsSource="{Binding SavePaths}"
                                               BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
@@ -564,7 +623,9 @@
                                                         <StackPanel>
                                                             <!-- 第一行：名字 + 当前徽章（圆点已去除，颜色仅靠当前徽章区分） -->
                                                             <StackPanel Orientation="Horizontal">
-                                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                                           MaxWidth="108" TextTrimming="CharacterEllipsis"
+                                                                           ToolTip="{Binding Name}"/>
                                                                 <Border CornerRadius="5" Padding="5,1" Margin="8,0,0,0"
                                                                         Background="{DynamicResource OnPrimaryOverlay}"
                                                                         Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
@@ -796,7 +857,7 @@
                                                             </Button>
                                                             <!-- 云按钮：与锁同款 13px 矢量图标——未传=灰云，已存=绿云带勾，已删=灰云；
                                                                  文字保留明示操作；已存禁用但自定义模板不压暗 -->
-                                                            <Button Width="92" Margin="0,0,6,0" Click="OnUploadBackup"
+                                                            <Button MinWidth="92" Margin="0,0,6,0" Click="OnUploadBackup"
                                                                     ToolTip="把这份备份上传到云盘（WebDAV）">
                                                                 <Button.Style>
                                                                     <Style TargetType="Button" BasedOn="{StaticResource BtnSm}">
@@ -858,11 +919,11 @@
                                                                     </TextBlock>
                                                                 </StackPanel>
                                                             </Button>
-                                                            <Button Style="{StaticResource BtnSm}" Content="改名" Width="46" Margin="0,0,6,0"
+                                                            <Button Style="{StaticResource BtnSm}" Content="改名" MinWidth="46" Margin="0,0,6,0"
                                                                     Click="OnEditBackupNote" ToolTip="修改此备份的名称"/>
-                                                            <Button Style="{StaticResource BtnSm}" Content="还原" Width="46" Margin="0,0,6,0"
+                                                            <Button Style="{StaticResource BtnSm}" Content="还原" MinWidth="46" Margin="0,0,6,0"
                                                                     Click="OnRestoreBackup"/>
-                                                            <Button Style="{StaticResource BtnSm}" Content="删除" Width="46" Click="OnDeleteBackup"/>
+                                                            <Button Style="{StaticResource BtnSm}" Content="删除" MinWidth="46" Click="OnDeleteBackup"/>
                                                         </StackPanel>
                                                     </Grid>
                                                     </Border>
@@ -910,6 +971,157 @@
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
+        </DataTemplate>
+
+        <!-- 完结馆海报卡片：真 3D 透视倾斜。卡片通过 Viewport2DVisual3D 贴在 3D 平面上，
+             透视相机下鼠标带动 rotateX/rotateY：左右倾时近侧边缘真实放大、上下方向同样能转；
+             全直角无圆角。视口比卡片大一圈（236×336 对 200×300），给倾斜外扩与投影留位。
+             暗角/扫光/投影在 code-behind 的 OnPosterTilt* 中按鼠标位置驱动。 -->
+        <DataTemplate x:Key="CompletedCard" DataType="models:GameEntry">
+            <Grid x:Name="CardRoot" Width="200" Height="300" Margin="0,0,12,12" Background="Transparent">
+                <Border x:Name="PcShadowHost" Background="Transparent">
+                    <Border.Effect>
+                        <DropShadowEffect x:Name="PcShadow" Color="{DynamicResource ShadowColor}" Direction="270"
+                                          BlurRadius="0" ShadowDepth="0" Opacity="0.12" RenderingBias="Quality"/>
+                    </Border.Effect>
+                    <Viewport3D Width="236" Height="336" Margin="-18,-18" Focusable="False">
+                        <Viewport3D.Camera>
+                            <PerspectiveCamera Position="0,0,520" LookDirection="0,0,-1" UpDirection="0,1,0"
+                                                FieldOfView="32" NearPlaneDistance="10" FarPlaneDistance="3000"/>
+                        </Viewport3D.Camera>
+                        <!-- 无灯光时 VisualHost 的 DiffuseMaterial 在部分机器/GPU 上渲染为纯黑，必须放一盏环境光 -->
+                        <ModelVisual3D>
+                            <ModelVisual3D.Content>
+                                <AmbientLight Color="White"/>
+                            </ModelVisual3D.Content>
+                        </ModelVisual3D>
+                        <Viewport2DVisual3D>
+                            <Viewport2DVisual3D.Transform>
+                                <Transform3DGroup>
+                                    <ScaleTransform3D ScaleX="200" ScaleY="300" ScaleZ="1"/>
+                                    <RotateTransform3D>
+                                        <RotateTransform3D.Rotation>
+                                            <AxisAngleRotation3D x:Name="PcRotY" Axis="0,1,0" Angle="0"/>
+                                        </RotateTransform3D.Rotation>
+                                    </RotateTransform3D>
+                                    <RotateTransform3D>
+                                        <RotateTransform3D.Rotation>
+                                            <AxisAngleRotation3D x:Name="PcRotX" Axis="1,0,0" Angle="0"/>
+                                        </RotateTransform3D.Rotation>
+                                    </RotateTransform3D>
+                                    <TranslateTransform3D x:Name="PcLift" OffsetX="0" OffsetY="0" OffsetZ="0"/>
+                                </Transform3DGroup>
+                            </Viewport2DVisual3D.Transform>
+                            <Viewport2DVisual3D.Geometry>
+                                <MeshGeometry3D Positions="-0.5,0.5,0 -0.5,-0.5,0 0.5,-0.5,0 0.5,0.5,0"
+                                                TriangleIndices="0 1 2 0 2 3"
+                                                TextureCoordinates="0,0 0,1 1,1 1,0"/>
+                            </Viewport2DVisual3D.Geometry>
+                            <Viewport2DVisual3D.Material>
+                                <DiffuseMaterial Brush="White" Viewport2DVisual3D.IsVisualHostMaterial="True"/>
+                            </Viewport2DVisual3D.Material>
+                            <Viewport2DVisual3D.Visual>
+                                <Border x:Name="PcFace" Width="200" Height="300" ClipToBounds="True"
+                                        Background="{DynamicResource Panel2}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                        Cursor="Hand"
+                                        MouseEnter="OnPosterTiltEnter" MouseMove="OnPosterTiltMove"
+                                        MouseLeave="OnPosterTiltLeave" MouseLeftButtonUp="OnCompletedCardClick">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentSoftBorder}"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Border.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="🖼 换海报…" Click="OnCompletedChangePoster"/>
+                                            <MenuItem Header="↩ 恢复官方竖海报" Click="OnCompletedResetPoster"
+                                                      Visibility="{Binding HasCustomPoster, Converter={StaticResource BoolToVis}}"/>
+                                            <MenuItem Header="📅 修改完结日期…" Click="OnCompletedEditDate"/>
+                                            <MenuItem Header="✕ 取消完结" Click="OnCompletedUnmark"
+                                                      Visibility="{Binding Archived, Converter={StaticResource InverseBoolToVis}}"/>
+                                            <MenuItem Header="🗑 彻底删除档案…" Click="OnCompletedDeleteArchive"
+                                                      Visibility="{Binding Archived, Converter={StaticResource BoolToVis}}"/>
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
+                                    <Grid>
+                                        <!-- 归档角标：游戏已从库中移除，仅留通关档案（卡片全直角，角标也不用圆角） -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,10,0,0"
+                                                Background="#CC14161C" Padding="7,3"
+                                                Visibility="{Binding Archived, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="已移出" FontSize="11" Foreground="#FFC2CBE0"/>
+                                        </Border>
+                                        <Image Source="{Binding PosterDisplayFile}" Stretch="UniformToFill"
+                                               RenderOptions.BitmapScalingMode="HighQuality"
+                                               Visibility="{Binding HasPosterDisplay, Converter={StaticResource BoolToVis}}"/>
+                                        <Border Visibility="{Binding HasPosterDisplay, Converter={StaticResource InverseBoolToVis}}">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="{DynamicResource IconPlaceholderStart}" Offset="0"/>
+                                                    <GradientStop Color="{DynamicResource IconPlaceholderEnd}" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <TextBlock Text="{Binding Letter}" FontSize="64" FontWeight="Bold" Foreground="White"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <!-- 底部压暗：恒定黑色渐变，保证游戏名可读（主题无关） -->
+                                        <Border Height="100" VerticalAlignment="Bottom">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                                                    <GradientStop Color="#E6000000" Offset="0"/>
+                                                    <GradientStop Color="#55000000" Offset="0.65"/>
+                                                    <GradientStop Color="#00000000" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Bottom" Margin="12,0,12,12">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="15" FontWeight="Bold"
+                                                       Foreground="White" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding DisplayName}"/>
+                                            <TextBlock Text="{Binding CompletedDateText}" FontSize="12" Margin="0,4,0,0"
+                                                       Foreground="#FFE6A8"/>
+                                        </StackPanel>
+                                        <!-- rotateX（上下倾）方向暗角：纵向渐变 -->
+                                        <Border x:Name="PcShadeY" IsHitTestVisible="False" Opacity="0">
+                                            <Border.Background>
+                                                <LinearGradientBrush x:Name="PcShadeYBrush" StartPoint="0,0" EndPoint="0,1">
+                                                    <GradientStop Color="#22000000" Offset="0"/>
+                                                    <GradientStop Color="#00000000" Offset="0.62"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                        <!-- rotateY（左右倾）方向暗角：横向渐变 -->
+                                        <Border x:Name="PcShadeX" IsHitTestVisible="False" Opacity="0">
+                                            <Border.Background>
+                                                <LinearGradientBrush x:Name="PcShadeXBrush" StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#22000000" Offset="0"/>
+                                                    <GradientStop Color="#00000000" Offset="0.62"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                        <!-- 跟随鼠标的扫光：绝对像素径向渐变，圆心由 code-behind 更新 -->
+                                        <Border x:Name="PcGlow" IsHitTestVisible="False" Opacity="0">
+                                            <Border.Background>
+                                                <RadialGradientBrush x:Name="PcGlowBrush" MappingMode="Absolute"
+                                                                     Center="100,150" GradientOrigin="100,150"
+                                                                     RadiusX="130" RadiusY="130">
+                                                    <GradientStop Color="{DynamicResource GlowColor}" Offset="0"/>
+                                                    <GradientStop Color="{DynamicResource GlowColorMid}" Offset="0.4"/>
+                                                    <GradientStop Color="{DynamicResource GlowColorFade}" Offset="1"/>
+                                                </RadialGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </Viewport2DVisual3D.Visual>
+                        </Viewport2DVisual3D>
+                    </Viewport3D>
+                </Border>
+            </Grid>
         </DataTemplate>
 
         <!-- 列表容器 -->
@@ -986,8 +1198,25 @@
             </Setter>
         </Style>
 
-        <DropShadowEffect x:Key="PopupShadow" Color="{DynamicResource ShadowColor}" BlurRadius="18"
-                          ShadowDepth="3" Opacity="0.28"/>
+        <!-- 性能：默认 ToolTip 模板用 SystemDropShadowChrome（软件投影），且首次打开要新建透明分层
+             HWND + 冷加载样式，实测在 GPU 被游戏占用时同步卡 UI 线程 1.4 秒。改用零投影轻量模板。 -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="9,4">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 性能：透明分层 Popup 上的 DropShadowEffect 会在首次打开时触发大尺寸软件位图模糊，
+             同步阻塞 UI 线程可达 1 秒以上（全屏游戏占用 GPU 时更甚）。浮层改用 1px 描边分层，零 Effect。 -->
     </Window.Resources>
 
     <!-- 外层容器：更新数据库时 RootGrid 整体禁用，停止按钮放在外层才可点 -->
@@ -1006,22 +1235,24 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="BtnScan" Style="{StaticResource BtnPrimary}" Content="⟳ 扫描 Steam"
                             Margin="0,0,10,0" Click="OnScanSteam"/>
-                    <Button Style="{StaticResource Btn}" Content="📁 扫描文件夹" Margin="0,0,10,0" Click="OnScanFolder"/>
-                    <Button Style="{StaticResource Btn}" Content="＋ 添加游戏" Margin="0,0,10,0" Click="OnAddGame"/>
-                    <Button Style="{StaticResource Btn}" Content="📂 备份管理" Margin="0,0,10,0" Click="OnOpenBackupDir"/>
+                    <Button Style="{StaticResource Btn}" Content="＋ 添加游戏" Margin="0,0,10,0" Click="OnAddGameWizard"
+                            ToolTip="选择游戏文件夹批量扫描，或手动指定单个游戏 exe"/>
                     <Button Style="{StaticResource Btn}" Content="☁ 云存档" Margin="0,0,10,0" Click="OnOpenCloudBrowser"
                             ToolTip="浏览/下载/删除云端备份（WebDAV：坚果云/NAS 等）"/>
-                    <Button Style="{StaticResource Btn}" Content="🌐 更新数据库" Click="OnRefreshAllWiki"
-                            ToolTip="强制联网更新全部游戏的 Wiki 存档规则与缺失的中文名（并行，中文名已有缓存的会跳过）"/>
-                    <Button Style="{StaticResource Btn}" Content="⚙ 设置" Margin="10,0,0,0" Click="OnOpenSettings"/>
-                    <TextBlock x:Name="BusyText" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="12"
+                    <Button x:Name="BtnCompleted" Style="{StaticResource Btn}" Content="🏆 完结馆" Margin="0,0,10,0"
+                            Click="OnOpenCompleted" ToolTip="已通关游戏的海报墙，按完结时间排列"/>
+                    <Button x:Name="BtnMore" Style="{StaticResource Btn}" Content="⋯ 更多" Margin="0,0,10,0"
+                            Click="OnMoreMenuClick"/>
+                    <Button Style="{StaticResource Btn}" Content="⚙ 设置" Margin="0,0,10,0" Click="OnOpenSettings"/>
+                    <TextBlock x:Name="BusyText" VerticalAlignment="Center" FontSize="12"
                                Foreground="{DynamicResource Accent2}" Visibility="Collapsed" Text="处理中…"/>
                 </StackPanel>
 
-                <!-- 右上角主题切换小图标按钮：点开浮窗三选一，选中即生效并保存 -->
+                <!-- 右上角主题切换小图标按钮：点开浮窗三选一，选中即生效并保存。
+                     用户要求：按钮本身不要外圈描边（厚度保留 1px 仅防悬停位移），悬停只出底色 -->
                 <Button x:Name="ThemeBtn" HorizontalAlignment="Right" VerticalAlignment="Center"
                         Padding="7,4" Cursor="Hand" Click="OnThemeBtnClick"
-                        Background="Transparent" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                        Background="Transparent" BorderBrush="Transparent" BorderThickness="1"
                         ToolTip="外观主题">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -1034,7 +1265,6 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource BtnHoverBg}"/>
-                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -1046,9 +1276,9 @@
                 <Popup x:Name="ThemePopup" Placement="Left" PlacementTarget="{Binding ElementName=ThemeBtn}"
                        HorizontalOffset="-6" VerticalOffset="0" AllowsTransparency="True"
                        StaysOpen="False" PopupAnimation="Fade">
-                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="1" CornerRadius="10" Padding="6"
-                            Effect="{StaticResource PopupShadow}">
+                    <!-- 用户要求：弹窗外圈描边去掉，只留面板底色；内部 4 个 chip 自身描边保留 -->
+                    <Border x:Name="ThemePopupBody" Background="{DynamicResource Panel}"
+                            BorderThickness="0" CornerRadius="10" Padding="6">
                         <StackPanel Orientation="Horizontal">
                             <RadioButton x:Name="ThemeChipSystem" Style="{StaticResource ChipSm}" Content="跟随系统"
                                          GroupName="ThemePopup" Tag="system" Checked="OnThemePopupChecked"/>
@@ -1094,14 +1324,18 @@
                                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"
                                     Click="OnClearSearch"/>
                         </Grid>
-                        <StackPanel Orientation="Horizontal" Margin="0,10,0,2">
+                        <WrapPanel Margin="0,10,0,2">
                             <RadioButton x:Name="FiltAll" Style="{StaticResource Chip}" GroupName="ft"
-                                         Content="全部" IsChecked="True" Checked="OnFilterChanged" Margin="0,0,6,0"/>
+                                         Content="全部" IsChecked="True" Checked="OnFilterChanged" Margin="0,0,6,4"/>
                             <RadioButton x:Name="FiltSteam" Style="{StaticResource Chip}" GroupName="ft"
-                                         Content="Steam" Checked="OnFilterChanged" Margin="0,0,6,0"/>
+                                         Content="Steam" Checked="OnFilterChanged" Margin="0,0,6,4"/>
                             <RadioButton x:Name="FiltLocal" Style="{StaticResource Chip}" GroupName="ft"
-                                         Content="本地版" Checked="OnFilterChanged"/>
-                        </StackPanel>
+                                         Content="本地版" Checked="OnFilterChanged" Margin="0,0,6,4"/>
+                            <!-- 已完结快捷筛选：已通关游戏平时沉在列表底部，点这里一键只看完结的 -->
+                            <RadioButton x:Name="FiltCompleted" Style="{StaticResource Chip}" GroupName="ft"
+                                         Content="已完结" Checked="OnFilterChanged" Margin="0,0,0,4"
+                                         ToolTip="只看已通关的游戏；平时它们自动沉在列表底部"/>
+                        </WrapPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,2">
                             <!-- 排序 chip 自带方向：点未选中的切换排序方式，再点一次当前 chip 切换升降序 -->
                             <RadioButton x:Name="RSortAdded" Style="{StaticResource Chip}" GroupName="sort"
@@ -1145,14 +1379,21 @@
                     <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0"
                             Padding="14,10">
                         <Grid>
-                            <TextBlock x:Name="SideCount" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"/>
-                            <TextBlock x:Name="SideSize" FontSize="11.5" Foreground="{DynamicResource TextSecondary}"
-                                       HorizontalAlignment="Right"/>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" x:Name="SideCount" FontSize="11.5"
+                                       Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="1" x:Name="SideSize" FontSize="11.5" Margin="10,0,0,0"
+                                       Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Right"
+                                       TextTrimming="CharacterEllipsis"/>
                         </Grid>
                     </Border>
                     <ListBox x:Name="GamesList" ItemTemplate="{StaticResource GameListItem}"
                              ScrollViewer.VerticalScrollBarVisibility="Auto" Margin="0,4,0,4"
-                             VirtualizingStackPanel.IsVirtualizing="False"
+                             VirtualizingStackPanel.IsVirtualizing="True"
+                             VirtualizingStackPanel.VirtualizationMode="Recycling"
                              SelectionChanged="OnGameSelected" MouseDoubleClick="OnListItemDoubleClick"
                              PreviewMouseLeftButtonDown="OnGamesListPreviewMouseDown">
                         <ListBox.Resources>
@@ -1234,6 +1475,421 @@
                 </Border>
             </Grid>
         </Grid>
+
+        <!-- 完结馆：整层覆盖主体区（顶工具栏与状态栏保留）；Esc/返回/点卡片离开 -->
+        <Border x:Name="CompletedView" Grid.Row="1" Background="{DynamicResource Bg}"
+                Visibility="Collapsed" Focusable="True">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="0,0,0,1" Padding="16,9">
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BtnCompletedBack" Style="{StaticResource Btn}" Content="← 返回"
+                                    Click="OnCloseCompleted"/>
+                            <TextBlock Text="完结馆" FontSize="18" FontWeight="Bold" Margin="16,0,0,0"
+                                       Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="CompletedSummary" FontSize="12"
+                                       Foreground="{DynamicResource TextSecondary}" Margin="14,2,0,0"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <RadioButton x:Name="CompletedGroupMonth" Style="{StaticResource Chip}" GroupName="cgmode"
+                                         Content="按月份" IsChecked="True" Checked="OnCompletedModeChanged"
+                                         Margin="0,0,6,0"/>
+                            <RadioButton x:Name="CompletedGroupYear" Style="{StaticResource Chip}" GroupName="cgmode"
+                                         Content="按年份" Checked="OnCompletedModeChanged"
+                                         Margin="0,0,6,0"/>
+                            <RadioButton x:Name="CompletedGroupAll" Style="{StaticResource Chip}" GroupName="cgmode"
+                                         Content="全部" Checked="OnCompletedModeChanged"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid>
+                        <StackPanel x:Name="CompletedHost" Margin="28,20,28,28"/>
+                        <!-- 空状态 -->
+                        <StackPanel x:Name="CompletedEmpty" Visibility="Collapsed" HorizontalAlignment="Center"
+                                    VerticalAlignment="Top" Margin="0,90">
+                            <Border Width="92" Height="92" CornerRadius="46" Background="{DynamicResource Panel2}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                <TextBlock Text="🏆" FontSize="42" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="还没有完结的游戏" FontSize="16" FontWeight="Bold" Margin="0,18,0,0"
+                                       Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center"/>
+                            <TextBlock Text="在游戏详情页点「🏆 完结撒花」，通关的游戏就会带着完结日期收藏到这里。"
+                                       FontSize="13" Foreground="{DynamicResource TextSecondary}" Margin="0,10,0,0"
+                                       TextAlignment="Center" MaxWidth="420" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+
+                <!-- 回顾详情：点海报卡进入（不离开完结馆）。站在玩家角度回顾：
+                     完结日/入库/总时长/次数/平均/近 7·30 天/备份/历次会话 -->
+                <Border x:Name="CompletedDetail" Grid.Row="1" Background="{DynamicResource Bg}"
+                        Visibility="Collapsed">
+                    <Border.Resources>
+                        <Style x:Key="SessionBadgeC" TargetType="Border">
+                            <Setter Property="CornerRadius" Value="5"/>
+                            <Setter Property="Padding" Value="7,1.5"/>
+                            <Setter Property="Background" Value="{DynamicResource BadgeLocalBg}"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource BadgeLocalBorder}"/>
+                            <Setter Property="BorderThickness" Value="1"/>
+                        </Style>
+                        <Style x:Key="SessionBadgeTextC" TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="10"/>
+                            <Setter Property="FontWeight" Value="Bold"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Orange}"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                    </Border.Resources>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Background="{DynamicResource Panel}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,9">
+                            <!-- 左右两列：右列按钮组空间不足时自动折行，窄窗/宽侧栏下不再裁掉「在列表中查看」 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="BtnCompletedDetailBack" Style="{StaticResource Btn}"
+                                            Content="← 收藏墙" Click="OnCompletedDetailBack"/>
+                                    <TextBlock Text="完结回顾" FontSize="18" FontWeight="Bold"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               Margin="16,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Button x:Name="BtnCdRun" Style="{StaticResource BtnSm}" Content="▶ 运行游戏"
+                                            Margin="0,0,8,4" Click="OnCompletedDetailRun"
+                                            Visibility="{Binding Archived, Converter={StaticResource InverseBoolToVis}}"/>
+                                    <Button x:Name="BtnCdChangePoster" Style="{StaticResource BtnSm}" Content="🖼 换海报"
+                                            Margin="0,0,8,4" Click="OnCompletedDetailChangePoster"/>
+                                    <Button x:Name="BtnCdEditDate" Style="{StaticResource BtnSm}" Content="📅 修改完结日期"
+                                            Margin="0,0,8,4" Click="OnCompletedDetailEditDate"/>
+                                    <Button x:Name="BtnCdUnmark" Style="{StaticResource BtnSm}" Content="✕ 取消完结"
+                                            Margin="0,0,8,4" Click="OnCompletedDetailUnmark"
+                                            Visibility="{Binding Archived, Converter={StaticResource InverseBoolToVis}}"/>
+                                    <Button x:Name="BtnCdDeleteArchive" Style="{StaticResource BtnSm}" Content="🗑 彻底删除档案"
+                                            Margin="0,0,8,4" Click="OnCompletedDetailDeleteArchive"
+                                            Visibility="{Binding Archived, Converter={StaticResource BoolToVis}}"/>
+                                    <Button x:Name="BtnCdLocate" Style="{StaticResource BtnSm}" Content="在列表中查看"
+                                            Margin="0,0,0,4" Click="OnCompletedDetailLocate"
+                                            Visibility="{Binding Archived, Converter={StaticResource InverseBoolToVis}}"/>
+                                </WrapPanel>
+                            </Grid>
+                        </Border>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel MaxWidth="920" Margin="24,14,24,16"
+                                        HorizontalAlignment="Stretch">
+                                <!-- 头部：竖海报 + 名称/完结信息（紧凑：海报 104×156，单行元信息） -->
+                                <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1" CornerRadius="12" Padding="16,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="104" Height="156" CornerRadius="8"
+                                                ClipToBounds="True" Background="{DynamicResource Panel2}"
+                                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                            <Grid>
+                                                <Image Source="{Binding PosterDisplayFile}" Stretch="UniformToFill"
+                                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                                       Visibility="{Binding HasPosterDisplay, Converter={StaticResource BoolToVis}}"/>
+                                                <Border Visibility="{Binding HasPosterDisplay, Converter={StaticResource InverseBoolToVis}}">
+                                                    <Border.Background>
+                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                            <GradientStop Color="{DynamicResource IconPlaceholderStart}" Offset="0"/>
+                                                            <GradientStop Color="{DynamicResource IconPlaceholderEnd}" Offset="1"/>
+                                                        </LinearGradientBrush>
+                                                    </Border.Background>
+                                                    <TextBlock Text="{Binding Letter}" FontSize="40" FontWeight="Bold"
+                                                               Foreground="White" HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"/>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="21" FontWeight="Bold"
+                                                       Foreground="{DynamicResource TextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding SubName}" FontSize="12" Margin="0,3,0,0"
+                                                       Foreground="{DynamicResource TextSecondary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <Border Background="{DynamicResource GreenSoft}"
+                                                    BorderBrush="{DynamicResource GreenSoftBorder}"
+                                                    BorderThickness="1" CornerRadius="13" Padding="10,4"
+                                                    Margin="0,9,0,0" HorizontalAlignment="Left">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+                                                        <Path Stretch="Uniform" Data="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.41 5 9.31 5 8zm14 0c0 1.31-.84 2.41-2 2.82V7h2v1z">
+                                                            <Path.Fill>
+                                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                                    <GradientStop Color="{DynamicResource MemorialGoldHi}" Offset="0"/>
+                                                                    <GradientStop Color="{DynamicResource MemorialGoldLo}" Offset="1"/>
+                                                                </LinearGradientBrush>
+                                                            </Path.Fill>
+                                                        </Path>
+                                                    </Viewbox>
+                                                    <TextBlock Text="{Binding CompletedFullText}" FontSize="12.5"
+                                                               FontWeight="Bold" Foreground="{DynamicResource Green}"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                <TextBlock Text="入库 " FontSize="12"
+                                                           Foreground="{DynamicResource TextSecondary}"/>
+                                                <TextBlock Text="{Binding AddedAtText}" FontSize="12"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                                <TextBlock Text="最后游玩 " FontSize="12" Margin="16,0,0,0"
+                                                           Foreground="{DynamicResource TextSecondary}"/>
+                                                <TextBlock Text="{Binding LastPlayedText}" FontSize="12"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <!-- 右侧完结纪念卡：配色跟随三套主题（冷底衬暖金，金色只给日期主角） -->
+                                        <Border Grid.Column="2" Width="200" Margin="14,0,0,0"
+                                                CornerRadius="10" BorderThickness="1"
+                                                BorderBrush="{DynamicResource MemorialBorder}">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="0.6,1">
+                                                    <GradientStop Color="{DynamicResource MemorialBgTop}" Offset="0"/>
+                                                    <GradientStop Color="{DynamicResource MemorialBgBottom}" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Grid Margin="13,10">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Center"
+                                                            Margin="0,3,0,0">
+                                                    <!-- 手绘金杯：香槟金渐变（低饱和） -->
+                                                    <Viewbox Width="15" Height="15" Margin="0,0,7,0">
+                                                        <Path Data="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.41 5 9.31 5 8zm14 0c0 1.31-.84 2.41-2 2.82V7h2v1z">
+                                                            <Path.Fill>
+                                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                                    <GradientStop Color="{DynamicResource MemorialGoldHi}" Offset="0"/>
+                                                                    <GradientStop Color="{DynamicResource MemorialGoldLo}" Offset="1"/>
+                                                                </LinearGradientBrush>
+                                                            </Path.Fill>
+                                                        </Path>
+                                                    </Viewbox>
+                                                    <TextBlock Text="完结纪念" FontSize="12.5" FontWeight="Bold"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource MemorialTitle}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                    <!-- 唯一主角：完结日期，主题金渐变 -->
+                                                    <TextBlock x:Name="CdMemorialDate" FontSize="23" FontWeight="Bold"
+                                                               HorizontalAlignment="Center">
+                                                        <TextBlock.Foreground>
+                                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                                <GradientStop Color="{DynamicResource MemorialGoldHi}" Offset="0"/>
+                                                                <GradientStop Color="{DynamicResource MemorialGoldLo}" Offset="1"/>
+                                                            </LinearGradientBrush>
+                                                        </TextBlock.Foreground>
+                                                    </TextBlock>
+                                                    <TextBlock x:Name="CdMemorialAgo" FontSize="11.5"
+                                                               Margin="0,5,0,0" HorizontalAlignment="Center"
+                                                               Foreground="{DynamicResource MemorialMuted}"/>
+                                                </StackPanel>
+                                                <Grid Grid.Row="2">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="1"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                                        <TextBlock Text="通关用时" FontSize="10.5"
+                                                                   HorizontalAlignment="Center"
+                                                                   Foreground="{DynamicResource MemorialMuted}"/>
+                                                        <TextBlock x:Name="CdMemorialSpan" FontSize="14" FontWeight="SemiBold"
+                                                                   Margin="0,2,0,0" HorizontalAlignment="Center"
+                                                                   Foreground="{DynamicResource MemorialValue}"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="1" Background="{DynamicResource MemorialDivider}" Margin="0,3"/>
+                                                    <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                                        <TextBlock Text="完结至今" FontSize="10.5"
+                                                                   HorizontalAlignment="Center"
+                                                                   Foreground="{DynamicResource MemorialMuted}"/>
+                                                        <TextBlock x:Name="CdMemorialSince" FontSize="14" FontWeight="SemiBold"
+                                                                   Margin="0,2,0,0" HorizontalAlignment="Center"
+                                                                   Foreground="{DynamicResource MemorialSince}"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+
+                                <!-- 统计：单行 6 个紧凑指标格（总时长格用强调色底，视觉排序） -->
+                                <UniformGrid Columns="6" Margin="0,10,0,0">
+                                    <Border Background="{DynamicResource AccentSoft}" BorderBrush="{DynamicResource Accent}"
+                                            BorderThickness="1" CornerRadius="8" Margin="0,0,4,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="总时长" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock Text="{Binding TotalPlayText}" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource Accent}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" Margin="4,0,4,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="游玩次数" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock x:Name="CdStatCount" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource TextPrimary}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" Margin="4,0,4,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="平均每次" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock x:Name="CdStatAverage" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource TextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" Margin="4,0,4,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="近 7 天" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock x:Name="CdStatWeek7" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource TextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" Margin="4,0,4,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="近 30 天" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock x:Name="CdStatWeek30" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource TextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" Margin="4,0,0,0" Padding="10,7">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="存档备份" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock x:Name="CdStatBackups" FontSize="15" FontWeight="SemiBold"
+                                                       Margin="0,2,0,0" Foreground="{DynamicResource TextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+
+                                <!-- 历次会话（紧凑：内部列表自带滚动，整页不再需要滚轮） -->
+                                <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1" CornerRadius="10" Margin="0,10,0,0"
+                                        MinHeight="120" MaxHeight="168">
+                                    <Grid Margin="4,2">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" x:Name="CdSessionHeader" FontSize="11.5"
+                                                   Margin="10,5,0,3" Foreground="{DynamicResource TextSecondary}"/>
+                                        <ListBox Grid.Row="1" x:Name="CdSessionList" BorderThickness="0"
+                                                 Background="Transparent" Foreground="{DynamicResource TextPrimary}">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                    <Setter Property="Padding" Value="6,1.5"/>
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="ListBoxItem">
+                                                                <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                                                        CornerRadius="7" Padding="{TemplateBinding Padding}">
+                                                                    <ContentPresenter/>
+                                                                </Border>
+                                                                <ControlTemplate.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter TargetName="Bd" Property="Background"
+                                                                                Value="{DynamicResource AccentSoft}"/>
+                                                                    </Trigger>
+                                                                </ControlTemplate.Triggers>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding RangeText}" FontSize="12"
+                                                                   Foreground="{DynamicResource TextPrimary}"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding DurationText}" FontSize="12"
+                                                                   Margin="0,0,10,0" VerticalAlignment="Center"
+                                                                   Foreground="{DynamicResource TextSecondary}"/>
+                                                        <Border Grid.Column="2" Style="{StaticResource SessionBadgeC}"
+                                                                Visibility="{Binding Interrupted, Converter={StaticResource BoolToVis}}">
+                                                            <TextBlock Style="{StaticResource SessionBadgeTextC}" Text="中断"/>
+                                                        </Border>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                    x:Name="CdSessionEmpty">
+                                            <TextBlock Text="暂无游玩记录" FontSize="13" HorizontalAlignment="Center"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                            <TextBlock Text="启动游戏玩一局，退出后自动记录" FontSize="11.5"
+                                                       Margin="0,6,0,0" HorizontalAlignment="Center"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <TextBlock Text="游玩数据仅统计本程序开启后的记录；完结日期可随时补改。"
+                                           FontSize="10.5" Margin="2,7,0,0"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+        <Popup x:Name="CompletedDatePopup" Placement="Bottom" AllowsTransparency="True"
+               StaysOpen="False" PopupAnimation="Fade">
+            <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="10">
+                <StackPanel>
+                    <TextBlock Text="选择完结日期（点日期即生效）" FontSize="12.5"
+                               Foreground="{DynamicResource TextSecondary}" Margin="2,0,0,6"/>
+                    <Calendar x:Name="CompletedCalendar" SelectedDatesChanged="OnCompletedDateChanged"/>
+                    <Button x:Name="CompletedTodayBtn" Style="{StaticResource Btn}" Content="回到今天"
+                            HorizontalAlignment="Right" Margin="0,8,0,0" Click="OnCompletedTodayClick"/>
+                </StackPanel>
+            </Border>
+        </Popup>
 
         <!-- 状态栏 -->
         <Border Grid.Row="2" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"

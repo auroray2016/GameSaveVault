@@ -2,11 +2,13 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 using GameSaveManager.Models;
@@ -129,6 +131,64 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _watchTimer.Tick += WatchTick;
         _watchTimer.Start();
 
+        // 预热主题浮窗：透明分层 Popup 首次打开要创建分层 HWND + 冷初始化视觉树/模板，
+        // 实测在全屏游戏占用 GPU 等场景会同步卡 UI 线程 1.3 秒（菜单迟迟不弹出）。
+        // 启动空闲时隐身开关一次：无动画+内容透明，用户不可见，仅完成冷启动热身。
+        Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            try
+            {
+                var oldAnim = ThemePopup.PopupAnimation;
+                ThemePopup.PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.None;
+                ThemePopupBody.Opacity = 0;
+                void Warm(object? ss, System.EventArgs ee)
+                {
+                    ThemePopup.Opened -= Warm;
+                    ThemePopup.IsOpen = false;
+                    Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                    {
+                        ThemePopupBody.Opacity = 1;
+                        ThemePopup.PopupAnimation = oldAnim;
+                    }));
+                }
+                ThemePopup.Opened += Warm;
+                ThemePopup.IsOpen = true;
+
+                // ToolTip 同样是透明分层 HWND，首次悬停才冷启动（实测 1.4 秒卡顿的真正来源）。
+                // 启动空闲时屏幕外隐身开关一次，付清冷启动账单；延迟到浮窗预热之后避免叠加。
+                Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+                {
+                    try
+                    {
+                        var warmTip = new System.Windows.Controls.ToolTip
+                        {
+                            Content = " ",
+                            Opacity = 0,
+                            Placement = System.Windows.Controls.Primitives.PlacementMode.Absolute,
+                            HorizontalOffset = -20000,
+                            VerticalOffset = -20000,
+                        };
+                        RoutedEventHandler? tipOpened = null;
+                        var tipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                        tipTimer.Tick += (_, _) =>
+                        {
+                            tipTimer.Stop();
+                            warmTip.IsOpen = false;
+                        };
+                        tipOpened = (_, _) =>
+                        {
+                            warmTip.Opened -= tipOpened;
+                            tipTimer.Start();
+                        };
+                        warmTip.Opened += tipOpened;
+                        warmTip.IsOpen = true;
+                    }
+                    catch { }
+                }));
+            }
+            catch { }
+        }));
+
         Loaded += async (_, _) =>
         {
             UpdateStatusBar();
@@ -140,7 +200,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ProfileService.BackfillMarkers();   // 玩家数据根补写 game.json 身份证，空壳根清理（幂等）
             ReclaimRemovedGameData(silent: false);   // 移除后重新入库的游戏：找回旧备份与玩家档案（幂等）
             bool rebuiltFromBackups = await TryOfferRebuildFromBackupsAsync();   // 索引丢失/损坏且无快照：询问是否从备份目录重建卡片
-            if (Store.Games.Count == 0)
+            if (!Store.Games.Any(g => !g.Archived))
             {
                 await ScanSteamAsync(firstRun: true);
                 // 索引损坏后空库首扫：扫到的游戏可能正是旧 zip 的属主，补一次合并/找回
@@ -157,9 +217,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     CollectionViewSource.GetDefaultView(Store.Games).Refresh();
                     ShowToast($"已自动修正 {fixLog.Count} 处启动器/模拟器误入库问题");
                 }
+                // 手动封面历史命名 custom_* → 官方同款 {appId}.jpg（幂等；静默执行）
+                var coverFix = DataMigration.NormalizeCustomCovers();
+                if (coverFix.Count > 0)
+                    CollectionViewSource.GetDefaultView(Store.Games).Refresh();
                 // 玩家1卡槽为 UI 虚拟显示（ListSlots 回退），入库零磁盘副作用，无需启动迁移
                 _ = BackfillWikiAsync();   // 已有库：Wiki 规则回填/过期更新
                 _ = BackfillLocalMatchAsync();   // 学习版联网反查封面/中文名
+                _ = BackfillCompletedPostersAsync(delayed: true);   // 已完结缺竖海报：补拉（含新游戏哈希图床兜底）
                 if (Store.Settings.ScanOnStartup)
                     await ScanSteamAsync(false);   // 增量扫描，只新增不重复
             }
@@ -329,7 +394,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private GameEntry? PickHotKeyBackupTarget()
     {
         var running = Store.Games
-            .Where(x => x.ExePath.Length > 0 && BackupService.IsGameRunning(x)).ToList();
+            .Where(x => !x.Archived && x.ExePath.Length > 0 && BackupService.IsGameRunning(x)).ToList();
         if (running.Count > 0)
             return SelectedGame != null && running.Contains(SelectedGame) ? SelectedGame : running[0];
         return SelectedGame;
@@ -344,9 +409,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// <summary>启动后对已入库游戏做 Wiki 补全（缓存 30 天，过期自动静默更新）。</summary>
     private static async Task BackfillWikiAsync()
     {
-        await Task.Delay(1500);
+        await Task.Delay(1500).ConfigureAwait(false);
         foreach (var g in Store.Games.ToList())
-            await EnrichWikiAsync(g);
+        {
+            if (g.Archived) continue;   // 归档条目复活时再补
+            await EnrichWikiAsync(g).ConfigureAwait(false);
+        }
     }
 
     /// <summary>启动后对学习版游戏做联网反查（Wiki 提 appid → 封面/中文名），静默。
@@ -356,7 +424,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         await Task.Delay(3000);
         var toFix = Store.Games
-            .Where(x => !x.IsSteam && (x.AppId == 0 || !x.HasCover
+            .Where(x => !x.Archived && !x.IsSteam && (x.AppId == 0 || !x.HasCover
                         || string.IsNullOrWhiteSpace(x.NameCN) || IsJunkName(x.NameEN)))
             .OrderBy(x => x.AppId == 0)   // 先纠正已有 appid 但没封面/名字不对的
             .ToList();
@@ -400,6 +468,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (a == null || b == null) continue;
 
                 var (keep, drop) = ChooseKeeper(a, b);
+                if (!keep.Archived || !drop.Archived) keep.Archived = false;   // 任一活跃：合并结果回到库
                 Store.MergeGame(keep, drop);
                 Store.Games.Remove(drop);
                 mergedTotal++;
@@ -456,6 +525,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         int games = 0, backups = 0, profiles = 0;
         foreach (var g in Store.Games.ToList())
         {
+            if (g.Archived) continue;   // 归档条目不自动找回（其残留备份归「未关联备份」窗口管，复活时再接回）
             var (n, slots) = ReclaimGameData(g);
             if (n == 0 && slots == 0) continue;
             games++; backups += n; profiles += slots;
@@ -473,7 +543,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// 用户选「否」时落盘一份空索引，避免以后每次启动都追问。</summary>
     private async Task<bool> TryOfferRebuildFromBackupsAsync()
     {
-        if (Store.Games.Count > 0) return false;
+        if (Store.Games.Any(g => !g.Archived)) return false;
         if (Store.CorruptGamesFile == null && !Store.GamesFileAbsent) return false;
         List<BackupService.OrphanBackupInfo> candidates;
         try
@@ -490,7 +560,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             "是否立即根据备份重建游戏卡片？\n" +
             "• 备份记录、玩家档案、存档位置会自动找回\n" +
             "• 卡片先标记为未安装；重装游戏后扫描会自动补全 exe、AppId 与封面\n\n" +
-            "选「否」保持空库（备份不会被删除，随时可在备份管理中查看）。",
+            "选「否」保持空库（备份不会被删除，随时可在「更多 → 未关联备份」中查看）。",
             "从备份重建游戏库", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (r != MessageBoxResult.Yes)
         {
@@ -609,7 +679,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private (List<GameEntry> games, string msg, bool lpChanged) ScanSteamCore()
+    private async Task<(List<GameEntry> games, string msg, bool lpChanged)> ScanSteamCore()
     {
         var steamPath = SteamScanner.FindSteamPath();
         if (steamPath == null) return (new List<GameEntry>(), "未找到 Steam，请确认已安装", false);
@@ -633,6 +703,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var existing = Store.Games.FirstOrDefault(g => g.AppId == gi.AppId && gi.AppId > 0);
             if (existing != null)
             {
+                // 归档档案（删库留卡）被重新扫到：就地复活，备份/海报/通关记录全接回
+                if (existing.Archived)
+                {
+                    existing.Archived = false;
+                    existing.LastPlayed = gi.LastPlayed;
+                    if (!string.IsNullOrWhiteSpace(gi.ExePath))
+                    {
+                        existing.ExePath = gi.ExePath;
+                        existing.InstallDir = gi.InstallDir;
+                    }
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        var (rb, rs) = ReclaimGameData(existing);
+                        existing.Refresh();
+                        Store.Save();
+                        ApplyFilter();
+                        BuildCompletedHostIfOpen();
+                        ShowToast(rb + rs > 0
+                            ? $"「{existing.DisplayName}」已重新加入库，找回 {rb} 份备份" + (rs > 0 ? $"、{rs} 个玩家档案" : "")
+                            : $"「{existing.DisplayName}」已重新加入库，完结档案已接回");
+                    });
+                    lpChanged = true;
+                    continue;
+                }
                 // 已存在：仅刷新最近游玩时间（manifest 变化时保持排序准确）
                 if (existing.LastPlayed != gi.LastPlayed)
                 {
@@ -718,17 +812,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async Task EnrichSteamGamesAsync()
     {
         int coverFails = 0;   // 封面下载失败数（结束后一次性提示，不再静默）
-        foreach (var g in Store.Games.Where(g => g.IsSteam && g.AppId > 0).ToList())
+        foreach (var g in Store.Games.Where(g => !g.Archived && g.IsSteam && g.AppId > 0).ToList())
         {
+            // 先认领本地缓存（零网络）：以前下载过的横封/竖海报直接复用，慢网断网也不重下
+            await Dispatcher.InvokeAsync(() => Store.AdoptCachedArtwork(g));
             if (!g.HasCover)
             {
                 string cover = Store.CoverFileFor(g.AppId);
-                bool ok = await SteamApi.DownloadCover(g.AppId, cover);
+                bool ok = await SteamApi.DownloadCover(g.AppId, cover);   // 下载器对有效本地缓存同样零网络短路
                 if (ok)
                     await Dispatcher.BeginInvoke(() => { g.CoverFile = cover; g.Refresh(); });
                 else
                     coverFails++;
             }
+            // 已完结游戏的竖海报补拉在 Steam 循环结束后统一做（含 Local 游戏），见 BackfillCompletedPostersAsync
             if (string.IsNullOrWhiteSpace(g.NameCN))
             {
                 var r = await GameNameService.FetchAsync(g.AppId);
@@ -774,9 +871,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
             await EnrichWikiAsync(g);
         }
+
+        await BackfillCompletedPostersAsync();
+
         if (coverFails > 0)
             await Dispatcher.BeginInvoke(() => ShowToast(
                 $"{coverFails} 款游戏的封面下载失败（网络原因），可稍后在「✎ 编辑」里重试", true));
+    }
+
+    /// <summary>已完结但缺竖海报的游戏补拉官方海报（标记时离线、CDN 老路径 404、新游戏仅哈希图床等）。
+    /// 不限 Steam 游戏：手动添加向导入库但已匹配 AppId 的 Local 游戏同样补；自定义海报绝不覆盖。
+    /// 下载失败静默占位（卡片/详情自动回退横封面→图标）。</summary>
+    private async Task BackfillCompletedPostersAsync(bool delayed = false)
+    {
+        if (delayed) await Task.Delay(2500);   // 启动 fire-and-forget 时让迁移/扫描先落位
+        foreach (var g in Store.Games.Where(g => g.AppId > 0 && g.IsCompleted && !g.HasPoster && !g.HasCustomPoster).ToList())
+        {
+            // 先认领本地老图（含删游戏时保留的 custom_app_{appId}.jpg 手换海报）：零网络
+            bool adopted = await Dispatcher.InvokeAsync(() => Store.AdoptCachedArtwork(g));
+            if (adopted) { Store.Save(); continue; }
+            string poster = Store.PosterFileFor(g.AppId);
+            if (await SteamApi.DownloadPoster(g.AppId, poster))
+                await Dispatcher.BeginInvoke(() => { g.PosterFile = poster; g.Refresh(); });
+        }
     }
 
     /// <summary>
@@ -790,7 +907,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             string? sp = SteamScanner.FindSteamPath();
             string? uid = sp != null ? SteamScanner.GetSteamUserId(sp) : null;
-            var found = await WikiService.EnrichAsync(g, sp, uid, forceRefresh);
+            // 必须在线程池跑：EnrichAsync 内部 await 会捕获进入线程的同步上下文，
+            // 从 UI 线程调用时 HTTP 回来后 wiki 正则解析（大文本+多正则）会冻住 UI 1 秒以上。
+            var found = await Task.Run(() => WikiService.EnrichAsync(g, sp, uid, forceRefresh)).ConfigureAwait(false);
             bool failed = WikiService.LastEnrichFailed;
             int added = 0;
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
@@ -811,58 +930,106 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     // ── 手动添加游戏 ────────────────────────────────────
-    private async void OnAddGame(object s, RoutedEventArgs e)
+    /// <summary>「＋ 添加游戏」统一入口：向导里选文件夹批量扫描或手动指定 exe，勾选后逐个入库。</summary>
+    private async void OnAddGameWizard(object s, RoutedEventArgs e)
     {
-        var dlg = new OpenFileDialog
-        {
-            Title = "选择游戏主程序 exe",
-            Filter = "可执行文件 (*.exe)|*.exe",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var dlg = new AddGamesWindow { Owner = this };
+        if (dlg.ShowDialog() != true || dlg.SelectedPicks.Count == 0) return;
 
-        string exe = dlg.FileName;
-        string dir = Path.GetDirectoryName(exe) ?? "";
-
-        // 同一 exe / 同一安装目录已在库 → 不重复入库，直接定位（卸载换目录重装的合并在联网匹配 AppId 后处理）
-        var dup = Store.Games.FirstOrDefault(x =>
-            !string.IsNullOrWhiteSpace(x.ExePath) && x.ExePath.Equals(exe, StringComparison.OrdinalIgnoreCase)
-            || (!string.IsNullOrWhiteSpace(x.InstallDir) && dir.Equals(x.InstallDir, StringComparison.OrdinalIgnoreCase)));
-        if (dup != null)
-        {
-            RevealGame(dup);
-            ShowToast($"「{dup.DisplayName}」已在游戏库中，已为你定位");
-            return;
-        }
-
-        string nameEN;
+        SetBusy(true);
+        int added = 0, reBak = 0, reSlot = 0;
+        GameEntry? firstAdded = null;
         try
         {
-            var vi = FileVersionInfo.GetVersionInfo(exe);
-            nameEN = !string.IsNullOrWhiteSpace(vi.ProductName) ? vi.ProductName
-                   : Path.GetFileNameWithoutExtension(exe);
+            foreach (var c in dlg.SelectedPicks)
+            {
+                // 已归档（删库但留完结档案）的同游戏被重新添加：就地复活，旧备份/海报/通关记录全接回
+                var archived = Store.Games.FirstOrDefault(g => g.Archived &&
+                    (!string.IsNullOrWhiteSpace(g.ExePath) && g.ExePath.Equals(c.Exe, StringComparison.OrdinalIgnoreCase)
+                     || (!string.IsNullOrWhiteSpace(g.InstallDir) && c.Dir.Equals(g.InstallDir, StringComparison.OrdinalIgnoreCase))));
+                if (archived != null)
+                {
+                    await ReviveArchivedAsync(archived, c);
+                    added++;
+                    firstAdded ??= archived;
+                    continue;
+                }
+                // 向导已按 exe/安装目录去重并标注在库；此处二次保险
+                if (Store.Games.Any(g => !g.Archived &&
+                    (g.ExePath.Equals(c.Exe, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrEmpty(g.InstallDir) && c.Dir.Equals(g.InstallDir, StringComparison.OrdinalIgnoreCase)))))
+                    continue;
+                var (g, rb, rs) = await AddLocalGameEntryAsync(c);
+                if (g == null) continue;
+                reBak += rb; reSlot += rs;
+                added++;
+                firstAdded ??= g;
+            }
+            if (added > 0)
+            {
+                Store.Save();
+                UpdateRecentAddedDot();
+                RevealGame(firstAdded!);
+                CollectionViewSource.GetDefaultView(Store.Games).Refresh();
+            }
+            string reclaimMsg = reBak + reSlot > 0
+                ? $"；已找回 {reBak} 份旧备份" + (reSlot > 0 ? $"、{reSlot} 个玩家档案" : "")
+                : "";
+            ShowToast(added > 0 ? $"已添加 {added} 款游戏" + reclaimMsg : "所选游戏都已在库中");
         }
-        catch { nameEN = Path.GetFileNameWithoutExtension(exe); }
+        catch (Exception ex)
+        {
+            ShowToast("添加失败：" + ex.Message, true);
+        }
+        finally { SetBusy(false); }
+    }
 
-        var g = new GameEntry { Type = "Local", NameEN = nameEN, ExePath = exe, InstallDir = dir, AddedAt = DateTime.Now };
-        var paths = await Task.Run(() => SaveLocator.Detect(nameEN, exe, dir, 0, null));
+    /// <summary>归档条目重新入库（向导扫到同一安装位置）：档案复活，刷新路径/图标/存档规则并找回旧备份。</summary>
+    private async Task ReviveArchivedAsync(GameEntry g, FolderGameCandidate c)
+    {
+        g.Archived = false;
+        g.ExePath = c.Exe;
+        g.InstallDir = c.Dir;
+        var paths = await Task.Run(() => SaveLocator.Detect(g.NameEN, c.Exe, c.Dir, g.AppId, null));
+        foreach (var p in paths) g.TryAddAutoSavePath(p);
+        if (string.IsNullOrEmpty(g.IconFile) || !File.Exists(g.IconFile))
+        {
+            var icon = await Task.Run(() => IconExtractor.ExtractToPng(c.Exe, Store.IconFileFor(g.Id)));
+            if (icon != null) g.IconFile = icon;
+        }
+        var (rb, rs) = ReclaimGameData(g);
+        Store.AdoptCachedArtwork(g);   // 彻底删过备份的归档：按 AppId 认领横封/竖海报/手换海报保留档
+        g.Refresh();
+        Store.Save();
+        CollectionViewSource.GetDefaultView(Store.Games).Refresh();
+        BuildCompletedHostIfOpen();
+        _ = EnrichWikiAsync(g);
+        if (g.AppId == 0) _ = MatchLocalGameAsync(g);
+        if (rb + rs > 0) ShowToast($"「{g.DisplayName}」已重新加入库，找回 {rb} 份备份" + (rs > 0 ? $"、{rs} 个玩家档案" : ""));
+        else ShowToast($"「{g.DisplayName}」已重新加入库，完结档案已接回");
+    }
+
+    /// <summary>单个本地 exe 入库：建条目 → 探测存档 → 抽图标 → 找回旧备份 → 后台联网补资料。</summary>
+    private async Task<(GameEntry? g, int reBak, int reSlot)> AddLocalGameEntryAsync(FolderGameCandidate c)
+    {
+        var g = new GameEntry
+        {
+            Type = "Local",
+            NameEN = c.ProductName,
+            ExePath = c.Exe,
+            InstallDir = c.Dir,
+            AddedAt = DateTime.Now,
+        };
+        var paths = await Task.Run(() => SaveLocator.Detect(g.NameEN, c.Exe, c.Dir, 0, null));
         foreach (var p in paths) g.SavePaths.Add(p);
-
-        var icon = await Task.Run(() => IconExtractor.ExtractToPng(exe, Store.IconFileFor(g.Id)));
+        var icon = await Task.Run(() => IconExtractor.ExtractToPng(c.Exe, Store.IconFileFor(g.Id)));
         if (icon != null) g.IconFile = icon;
 
         Store.Games.Add(g);
-        var (reBak, reSlot) = ReclaimGameData(g);   // 移除后重新添加：找回旧备份与玩家档案
-        Store.Save();
-        UpdateRecentAddedDot();
-        RevealGame(g);
-        string reclaimMsg = reBak + reSlot > 0
-            ? $"；已找回 {reBak} 份旧备份" + (reSlot > 0 ? $"、{reSlot} 个玩家档案" : "")
-            : "";
-        ShowToast((paths.Count > 0
-            ? $"已添加「{g.DisplayName}」，自动识别到 {paths.Count} 个存档位置"
-            : $"已添加「{g.DisplayName}」，未自动识别到存档位置，请手动添加路径") + reclaimMsg);
+        var (rb, rs) = ReclaimGameData(g);   // 移除后重新添加：找回旧备份与玩家档案
         _ = MatchLocalGameAsync(g);
         _ = EnrichWikiAsync(g);
+        return (g, rb, rs);
     }
 
     /// <summary>
@@ -872,6 +1039,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// </summary>
     private async Task MatchLocalGameAsync(GameEntry g, bool silent = false, bool forceWiki = false)
     {
+        // 本方法含大量 HTTP/JSON/正则/磁盘扫描活，仅 Dispatcher.InvokeAsync 块内碰 UI。
+        // 先强制切到线程池（空同步上下文）：此后整条 await 链（WikiService/SteamApi 等
+        // 内部未加 ConfigureAwait 的 await）的延续都不会回到 UI 线程，避免启动联网匹配时冻 UI。
+        await Task.Run(() => { }).ConfigureAwait(false);
         try
         {
             // 钉死的条目（如同名新作被锁定 appid）只补封面/中文名/存档，不做 appid 反查
@@ -888,14 +1059,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 // （如被误配成 Desolate City），NameEN 自我确认会阻断正确词条的纠正
                 foreach (var (term, _) in terms.Where(t => t.FromFile))
                 {
-                    var wiki = await WikiService.LookupByNameAsync(term, forceWiki);
+                    var wiki = await WikiService.LookupByNameAsync(term, forceWiki).ConfigureAwait(false);
                     if (wiki is { AppId: > 0 } && IsConfident(term, wiki.Title))
                     { wikiAppId = wiki.AppId; wikiTitle = wiki.Title; break; }
                 }
                 if (wikiAppId == 0)
                 foreach (var (term, _) in terms.Where(t => !t.FromFile))
                 {
-                    var wiki = await WikiService.LookupByNameAsync(term, forceWiki);
+                    var wiki = await WikiService.LookupByNameAsync(term, forceWiki).ConfigureAwait(false);
                     if (wiki is { AppId: > 0 } && IsConfident(term, wiki.Title))
                     { wikiAppId = wiki.AppId; wikiTitle = wiki.Title; break; }
                 }
@@ -907,9 +1078,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     var ordered = terms.Where(t => t.FromFile).Concat(terms.Where(t => !t.FromFile));
                     foreach (var (term, _) in ordered)
                     {
-                        var hit = await SteamApi.SearchByName(term);
+                        var hit = await SteamApi.SearchByName(term).ConfigureAwait(false);
                         if (hit != null && IsConfident(term, hit.Value.Name) &&
-                            await SteamApi.DownloadCover(hit.Value.AppId, Store.CoverFileFor(hit.Value.AppId)))
+                            await SteamApi.DownloadCover(hit.Value.AppId, Store.CoverFileFor(hit.Value.AppId)).ConfigureAwait(false))
                         { searchAppId = hit.Value.AppId; searchTitle = hit.Value.Name; break; }
                     }
                 }
@@ -931,8 +1102,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             // ── 以下为网络操作，后台线程完成后再封送 UI ──
             string coverPath = Store.CoverFileFor(appId);
-            bool coverOk = g.HasCover || await SteamApi.DownloadCover(appId, coverPath);
-            var cnResult = await GameNameService.FetchAsync(appId);   // 自动源：本地库→小黑盒→Steam
+            bool coverOk = g.HasCover || await SteamApi.DownloadCover(appId, coverPath).ConfigureAwait(false);
+            var cnResult = await GameNameService.FetchAsync(appId).ConfigureAwait(false);   // 自动源：本地库→小黑盒→Steam
             var cn = cnResult.Name;
 
             string? newName = null;
@@ -968,6 +1139,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
 
                 bool changed = false;
+                // 先零网络认领磁盘老图（删过又添/空库重建）：横封、竖海报、手换海报保留档
+                if (Store.AdoptCachedArtwork(g)) changed = true;
                 if (g.AppId != appId) { g.AppId = appId; changed = true; }
                 if (newName != null && g.NameEN != newName) { g.NameEN = newName; changed = true; }
                 if (extraPaths != null)
@@ -996,6 +1169,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     if (!IsLauncherEntry(sibling) || IsLauncherEntry(g))
                     {
+                        sibling.Archived = false;   // 保险：撞上归档同游戏的重复条目合并，结果回到库
                         Store.MergeGame(sibling, g);
                         Store.Games.Remove(g);
                         mergedAway = true;
@@ -1041,7 +1215,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (mergedAway || !Store.Games.Contains(g)) return;
 
             // appid 确定后按 app: 键再解析一次 Wiki 路径（Lookup 已写入缓存）
-            await EnrichWikiAsync(g);
+            await EnrichWikiAsync(g).ConfigureAwait(false);
         }
         catch { /* 匹配失败不影响使用，可稍后手动「更新信息」重试 */ }
     }
@@ -1182,68 +1356,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return tokens >= 2;
     }
 
-    // ── 扫描文件夹（批量导入学习版）─────────────────────
-    private async void OnScanFolder(object s, RoutedEventArgs e)
-    {
-        using var dlg = new System.Windows.Forms.FolderBrowserDialog
-        {
-            Description = "选择游戏根目录（自动扫描其下 1–2 层子目录的游戏 exe）",
-            ShowNewFolderButton = false,
-        };
-        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-
-        SetBusy(true);
-        int added = 0;
-        int reBak = 0, reSlot = 0;   // 重新入库找回统计
-        GameEntry? firstAdded = null;
-        try
-        {
-            var cands = await Task.Run(() => FolderScanner.Scan(dlg.SelectedPath));
-            foreach (var c in cands)
-            {
-                // 已入库（相同 exe 或相同安装目录）则跳过
-                if (Store.Games.Any(g => g.ExePath.Equals(c.Exe, StringComparison.OrdinalIgnoreCase)
-                    || (!string.IsNullOrEmpty(g.InstallDir) && c.Dir.Equals(g.InstallDir, StringComparison.OrdinalIgnoreCase))))
-                    continue;
-
-                var g = new GameEntry
-                {
-                    Type = "Local",
-                    NameEN = c.ProductName,
-                    ExePath = c.Exe,
-                    InstallDir = c.Dir,
-                    AddedAt = DateTime.Now,
-                };
-                var paths = await Task.Run(() => SaveLocator.Detect(g.NameEN, c.Exe, c.Dir, 0, null));
-                foreach (var p in paths) g.SavePaths.Add(p);
-                var icon = await Task.Run(() => IconExtractor.ExtractToPng(c.Exe, Store.IconFileFor(g.Id)));
-                if (icon != null) g.IconFile = icon;
-
-                Store.Games.Add(g);
-                var (rb, rs) = ReclaimGameData(g);   // 移除后重新扫到：找回旧备份与玩家档案
-                reBak += rb; reSlot += rs;
-                added++;
-                firstAdded ??= g;
-                _ = MatchLocalGameAsync(g);
-                _ = EnrichWikiAsync(g);
-            }
-            if (added > 0) { Store.Save(); UpdateRecentAddedDot(); RevealGame(firstAdded!); }
-            string reclaimMsg = reBak + reSlot > 0
-                ? $"；已找回 {reBak} 份旧备份" + (reSlot > 0 ? $"、{reSlot} 个玩家档案" : "")
-                : "";
-            ShowToast((added > 0
-                ? $"扫描完成：新增 {added} 款游戏"
-                : $"扫描完成：没有发现新游戏（已忽略工具/卸载器等）") + reclaimMsg);
-            if (added > 0)
-                CollectionViewSource.GetDefaultView(Store.Games).Refresh();
-        }
-        catch (Exception ex)
-        {
-            ShowToast("扫描失败：" + ex.Message, true);
-        }
-        finally { SetBusy(false); }
-    }
-
     // ── 列表/筛选/搜索 ──────────────────────────────────
     /// <summary>点击列表空白处显示海报，并阻止 ListBox 取消选中。</summary>
     private void OnGamesListPreviewMouseDown(object s, MouseButtonEventArgs e)
@@ -1327,6 +1439,509 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RevealGame(g);
     }
 
+    // ── 完结馆 ──────────────────────────────────────────────────────────────
+
+    private GameEntry? _completedDateTarget;
+    private bool _suppressCompletedDateEvent;
+
+    private void OnOpenCompleted(object s, RoutedEventArgs e) => OpenCompleted();
+
+    private void OpenCompleted()
+    {
+        BuildCompletedHost();
+        CompletedView.Visibility = Visibility.Visible;
+        PreviewKeyDown += OnCompletedViewKeyDown;
+        BtnCompletedBack.Focus();
+    }
+
+    private void OnCloseCompleted(object s, RoutedEventArgs e) => CloseCompleted();
+
+    private void CloseCompleted()
+    {
+        CompletedDatePopup.IsOpen = false;
+        CloseCompletedDetail();
+        CompletedView.Visibility = Visibility.Collapsed;
+        PreviewKeyDown -= OnCompletedViewKeyDown;
+    }
+
+    private void OnCompletedViewKeyDown(object s, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        // 两级返回：回顾详情 → 收藏墙 → 主界面
+        if (CompletedDetail.Visibility == Visibility.Visible) CloseCompletedDetail();
+        else CloseCompleted();
+    }
+
+    private void OnCompletedModeChanged(object s, RoutedEventArgs e)
+    {
+        // XAML 初始化期 RadioButton 状态设置也会触发，控件未就绪时跳过
+        if (CompletedView == null || CompletedView.Visibility != Visibility.Visible) return;
+        BuildCompletedHost();
+    }
+
+    /// <summary>按完结时间倒序列出；按月份模式下再按「年 → 月」两级分组，全部模式一整张 WrapPanel。</summary>
+    private void BuildCompletedHost()
+    {
+        var done = Store.Games.Where(g => g.IsCompleted)
+            .OrderByDescending(g => g.CompletedAt).ToList();
+        CompletedHost.Children.Clear();
+        CompletedEmpty.Visibility = done.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        CompletedSummary.Text = done.Count == 0
+            ? ""
+            : $"{done.Count} 款 · 总游玩 {PlayTracker.FormatDuration(done.Sum(g => g.PlaySeconds))}";
+        if (done.Count == 0) return;
+
+        if (CompletedGroupAll.IsChecked == true)
+        {
+            CompletedHost.Children.Add(MakeCompletedWrap(done));
+            return;
+        }
+        if (CompletedGroupYear.IsChecked == true)
+        {
+            // 按年份：每年一个大组（年内不再拆月），标题带该年款数
+            foreach (var year in done.GroupBy(g => g.CompletedAt.Year).OrderByDescending(y => y.Key))
+            {
+                var list = year.OrderByDescending(g => g.CompletedAt).ToList();
+                CompletedHost.Children.Add(MakeCompletedYearGroupHeader(year.Key, list.Count));
+                CompletedHost.Children.Add(MakeCompletedWrap(list));
+            }
+            return;
+        }
+        foreach (var year in done.GroupBy(g => g.CompletedAt.Year).OrderByDescending(y => y.Key))
+        {
+            CompletedHost.Children.Add(MakeCompletedYearHeader($"{year.Key} 年"));
+            foreach (var month in year.GroupBy(g => g.CompletedAt.Month).OrderByDescending(m => m.Key))
+            {
+                var list = month.OrderByDescending(g => g.CompletedAt).ToList();
+                CompletedHost.Children.Add(MakeCompletedMonthHeader(month.Key, list.Count));
+                CompletedHost.Children.Add(MakeCompletedWrap(list));
+            }
+        }
+    }
+
+    private WrapPanel MakeCompletedWrap(IList<GameEntry> games)
+    {
+        var wp = new WrapPanel();
+        var tpl = (DataTemplate)FindResource("CompletedCard");
+        foreach (var g in games)
+            wp.Children.Add(new ContentControl { Content = g, ContentTemplate = tpl });
+        return wp;
+    }
+
+    private TextBlock MakeCompletedYearHeader(string text) => new()
+    {
+        Text = text,
+        FontSize = 12.5,
+        FontWeight = FontWeights.Bold,
+        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+        Margin = new Thickness(2, 14, 0, 10),
+    };
+
+    /// <summary>「按年份」模式下的年组标题：与月标题同级视觉（大字+款数+分隔线）。</summary>
+    private Border MakeCompletedYearGroupHeader(int year, int count)
+    {
+        var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        row.Children.Add(new TextBlock
+        {
+            Text = $"{year} 年",
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+        });
+        row.Children.Add(new TextBlock
+        {
+            Text = $"{count} 款",
+            FontSize = 12,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+            Margin = new Thickness(10, 3, 0, 0),
+        });
+        var panel = new StackPanel { Margin = new Thickness(2, 6, 0, 14) };
+        panel.Children.Add(row);
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(0, 10, 0, 0),
+            Background = (System.Windows.Media.Brush)FindResource("BorderBrush"),
+        });
+        return new Border { Child = panel };
+    }
+
+    private Border MakeCompletedMonthHeader(int month, int count)
+    {
+        var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        row.Children.Add(new TextBlock
+        {
+            Text = $"{month} 月",
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+        });
+        row.Children.Add(new TextBlock
+        {
+            Text = $"{count} 款",
+            FontSize = 12,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+            Margin = new Thickness(10, 3, 0, 0),
+        });
+        var panel = new StackPanel { Margin = new Thickness(2, 6, 0, 14) };
+        panel.Children.Add(row);
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(0, 10, 0, 0),
+            Background = (System.Windows.Media.Brush)FindResource("BorderBrush"),
+        });
+        return new Border { Child = panel };
+    }
+
+    /// <summary>单击海报卡：不离开完结馆，在馆内打开「完结回顾」详情。</summary>
+    private void OnCompletedCardClick(object s, MouseButtonEventArgs e)
+    {
+        if (s is FrameworkElement fe && fe.DataContext is GameEntry g)
+            OpenCompletedDetail(g);
+    }
+
+    // ── 完结回顾详情（馆内第二层） ───────────────────────────────────────────
+
+    private GameEntry? _completedDetailGame;
+
+    private void OpenCompletedDetail(GameEntry g)
+    {
+        _completedDetailGame = g;
+        CompletedDetail.DataContext = g;
+        FillCompletedDetailStats(g);
+        CompletedDetail.Visibility = Visibility.Visible;
+        BtnCompletedDetailBack.Focus();
+    }
+
+    private void CloseCompletedDetail()
+    {
+        CompletedDatePopup.IsOpen = false;
+        if (CompletedDetail != null) CompletedDetail.Visibility = Visibility.Collapsed;
+        _completedDetailGame = null;
+    }
+
+    private static readonly string[] _weekdayCN = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
+
+    /// <summary>跨天天数（同一天=0），用于「通关用时/完结至今」纪念卡；负数（补录的完结日期早于入库）给 0。</summary>
+    private static string DaySpanText(int days) => days <= 0 ? "当天" : $"{days} 天";
+
+    private void FillCompletedDetailStats(GameEntry g)
+    {
+        int n = g.Sessions.Count;
+        CdStatCount.Text = n == 0 ? "—" : $"{n} 次";
+        CdStatAverage.Text = n == 0 ? "—" : PlayTracker.FormatDuration(g.PlaySeconds / n);
+        CdStatWeek7.Text = PlayTracker.FormatDuration(PlayTracker.SecondsSince(g, DateTime.Now.AddDays(-7)));
+        CdStatWeek30.Text = PlayTracker.FormatDuration(PlayTracker.SecondsSince(g, DateTime.Now.AddDays(-30)));
+        CdStatBackups.Text = g.Backups.Count == 0 ? "—" : $"{g.Backups.Count} 份";
+
+        // 右侧完结纪念卡
+        if (g.IsCompleted)
+        {
+            CdMemorialDate.Text = g.CompletedAt.ToString("yyyy.MM.dd");
+            CdMemorialAgo.Text = _weekdayCN[(int)g.CompletedAt.DayOfWeek] + "完结";
+            CdMemorialSpan.Text = g.AddedAt == DateTime.MinValue
+                ? "—"
+                : DaySpanText((g.CompletedAt.Date - g.AddedAt.Date).Days);
+            int since = (DateTime.Now.Date - g.CompletedAt.Date).Days;
+            CdMemorialSince.Text = since <= 0 ? "今天" : $"{since} 天";
+        }
+
+        CdSessionHeader.Text = n == 0 ? "游玩记录" : $"游玩记录（{n} 次，最近在上）";
+        CdSessionList.ItemsSource = g.Sessions.OrderByDescending(s => s.Start).ToList();
+        CdSessionEmpty.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+        CdSessionList.Visibility = n == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void OnCompletedDetailBack(object s, RoutedEventArgs e) => CloseCompletedDetail();
+
+    private void OnCompletedDetailRun(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is GameEntry g) LaunchGame(g);
+    }
+
+    private void OnCompletedDetailEditDate(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is GameEntry g && s is FrameworkElement btn)
+            OpenCompletedDateEditor(g, btn, System.Windows.Controls.Primitives.PlacementMode.Bottom);
+    }
+
+    private void OnCompletedDetailUnmark(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is GameEntry g) UnmarkCompleted(g);
+    }
+
+    /// <summary>离开完结馆到主界面：左列表定位选中该游戏（RevealGame 会在被筛选隐藏时切回「全部」）。</summary>
+    private void OnCompletedDetailLocate(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is not GameEntry g) return;
+        CloseCompleted();
+        RevealGame(g);
+    }
+
+    // ── 完结馆海报：手动换图 / 恢复官方（卡片右键与详情页共用） ────────────────
+
+    /// <summary>选本地图片存为该游戏的专属竖海报 posters\custom_{id}.jpg；jpg 直接复制，png/webp/bmp 转码 JPEG(90)。</summary>
+    private bool PickAndSaveCustomPoster(GameEntry g)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "选择竖版海报图片（建议 2:3 竖图）",
+            Filter = "图片 (*.jpg;*.jpeg;*.png;*.webp;*.bmp)|*.jpg;*.jpeg;*.png;*.webp;*.bmp",
+        };
+        if (dlg.ShowDialog(this) != true) return false;
+        try
+        {
+            string dest = Store.PosterCustomFileFor(g.Id);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            string ext = Path.GetExtension(dlg.FileName).ToLowerInvariant();
+            if (ext is ".jpg" or ".jpeg")
+            {
+                File.Copy(dlg.FileName, dest, overwrite: true);
+            }
+            else
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;   // 存完即可释放源文件
+                bmp.UriSource = new Uri(dlg.FileName, UriKind.Absolute);
+                bmp.EndInit();
+                bmp.Freeze();
+                var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+                enc.Frames.Add(BitmapFrame.Create(bmp));
+                using var fs = File.Create(dest);
+                enc.Save(fs);
+            }
+            g.PosterFile = dest;
+            // 同游戏的删库留档旧海报（custom_app_{appId}.jpg）已被新图取代，清掉防孤儿
+            try
+            {
+                if (g.AppId > 0)
+                {
+                    string oldKeep = Store.PosterCustomAppFileFor(g.AppId);
+                    if (File.Exists(oldKeep) && !string.Equals(oldKeep, dest, StringComparison.OrdinalIgnoreCase))
+                        File.Delete(oldKeep);
+                }
+            }
+            catch { }
+            g.Refresh();
+            Store.Save();
+            BuildCompletedHostIfOpen();
+            ShowToast("海报已更换");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ShowToast("海报保存失败：" + ex.Message, true);
+            return false;
+        }
+    }
+
+    /// <summary>删掉手动海报：有已下载的官方竖海报就回指；没有就清空，界面自动走 封面→图标→首字 兜底。</summary>
+    private void ResetCustomPoster(GameEntry g)
+    {
+        string custom = g.PosterFile;
+        string official = g.AppId > 0 ? Store.PosterFileFor(g.AppId) : "";
+        string next = !string.IsNullOrEmpty(official) && File.Exists(official) ? official : "";
+        try { if (File.Exists(custom)) File.Delete(custom); } catch { /* 占用等：仅解绑显示 */ }
+        g.PosterFile = next;
+        g.Refresh();
+        Store.Save();
+        BuildCompletedHostIfOpen();
+        ShowToast(next.Length > 0 ? "已恢复官方竖海报" : "已恢复自定义前的展示（封面/图标占位）");
+    }
+
+    /// <summary>海报卡右键 → 换海报。</summary>
+    private void OnCompletedChangePoster(object s, RoutedEventArgs e)
+    {
+        if (CompletedGameFromMenuItem(s) is GameEntry g) PickAndSaveCustomPoster(g);
+    }
+
+    /// <summary>海报卡右键 → 恢复官方竖海报。</summary>
+    private void OnCompletedResetPoster(object s, RoutedEventArgs e)
+    {
+        if (CompletedGameFromMenuItem(s) is GameEntry g) ResetCustomPoster(g);
+    }
+
+    /// <summary>详情页「🖼 换海报」：已是自定义时给「换一张 / 恢复官方」小菜单，否则直接选图。</summary>
+    private void OnCompletedDetailChangePoster(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is not GameEntry g || s is not FrameworkElement btn) return;
+        if (!g.HasCustomPoster) { PickAndSaveCustomPoster(g); return; }
+        var cm = new ContextMenu();
+        var miPick = new MenuItem { Header = "🖼 换一张…" };
+        miPick.Click += (_, _) => PickAndSaveCustomPoster(g);
+        var miReset = new MenuItem { Header = "↩ 恢复官方竖海报" };
+        miReset.Click += (_, _) => ResetCustomPoster(g);
+        cm.Items.Add(miPick);
+        cm.Items.Add(miReset);
+        cm.PlacementTarget = btn;
+        cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        cm.IsOpen = true;
+    }
+
+    private void BuildCompletedHostIfOpen()
+    {
+        if (CompletedView != null && CompletedView.Visibility == Visibility.Visible) BuildCompletedHost();
+    }
+
+    /// <summary>详情页「🏆 完结撒花」：记为当天 → 后台补拉竖海报（失败静默占位，更新数据库时再试）。</summary>
+    private async void OnMarkCompleted(object s, RoutedEventArgs e)
+    {
+        if (SelectedGame is not GameEntry g || g.IsCompleted) return;
+        g.CompletedAt = DateTime.Now;
+        g.Refresh();
+        Store.Save();
+        ApplyFilter();   // 完结状态变化：列表立即重排（新通关游戏沉到底部）
+        BuildCompletedHostIfOpen();
+        ShowToast($"《{g.DisplayName}》已收入完结馆");
+        await EnsurePosterAsync(g);
+    }
+
+    /// <summary>补拉完结馆竖版海报：有本地缓存直接指认；无 AppId（学习版/手动入库）/离线/CDN 无此图均静默。
+    /// 用户手动换过（custom_ 前缀）时一律不碰。</summary>
+    private async Task EnsurePosterAsync(GameEntry g)
+    {
+        if (g.AppId <= 0 || g.HasCustomPoster) return;
+        // 先零网络认领：官方竖图缓存、或删游戏时保留的手换海报 custom_app_{appId}.jpg
+        if (Store.AdoptCachedArtwork(g)) { Store.Save(); BuildCompletedHostIfOpen(); return; }
+        string path = Store.PosterFileFor(g.AppId);
+        if (File.Exists(path))
+        {
+            if (g.PosterFile != path) { g.PosterFile = path; Store.Save(); }
+            return;
+        }
+        if (await SteamApi.DownloadPoster(g.AppId, path))
+        {
+            await Dispatcher.BeginInvoke(() =>
+            {
+                g.PosterFile = path;
+                g.Refresh();
+                Store.Save();
+                BuildCompletedHostIfOpen();
+            });
+        }
+    }
+
+    /// <summary>详情页「✓ 已完结」：弹小菜单（修改日期 / 取消完结）。</summary>
+    private void OnCompletedDoneClick(object s, RoutedEventArgs e)
+    {
+        if (s is not FrameworkElement btn || SelectedGame is not GameEntry g) return;
+        var cm = new ContextMenu();
+        var miEdit = new MenuItem { Header = "📅 修改完结日期…" };
+        miEdit.Click += (_, _) => OpenCompletedDateEditor(g, btn, System.Windows.Controls.Primitives.PlacementMode.Bottom);
+        var miUnmark = new MenuItem { Header = "✕ 取消完结" };
+        miUnmark.Click += (_, _) => UnmarkCompleted(g);
+        cm.Items.Add(miEdit);
+        cm.Items.Add(miUnmark);
+        cm.PlacementTarget = btn;
+        cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+        cm.IsOpen = true;
+    }
+
+    /// <summary>海报卡右键 → 修改完结日期（菜单 DataContext 经 PlacementTarget 取）。</summary>
+    private void OnCompletedEditDate(object s, RoutedEventArgs e)
+    {
+        if (CompletedGameFromMenuItem(s) is not GameEntry g) return;
+        var anchor = (s as MenuItem)?.Parent is ContextMenu cm ? cm.PlacementTarget as FrameworkElement : null;
+        OpenCompletedDateEditor(g, anchor, System.Windows.Controls.Primitives.PlacementMode.MousePoint);
+    }
+
+    /// <summary>海报卡右键 → 取消完结。</summary>
+    private void OnCompletedUnmark(object s, RoutedEventArgs e)
+    {
+        if (CompletedGameFromMenuItem(s) is GameEntry g) UnmarkCompleted(g);
+    }
+
+    /// <summary>海报卡右键 → 彻底删除档案（仅归档条目可见）。</summary>
+    private void OnCompletedDeleteArchive(object s, RoutedEventArgs e)
+    {
+        if (CompletedGameFromMenuItem(s) is GameEntry g) DeleteCompletedArchive(g);
+    }
+
+    /// <summary>完结回顾详情 → 彻底删除档案（仅归档条目可见）。</summary>
+    private void OnCompletedDetailDeleteArchive(object s, RoutedEventArgs e)
+    {
+        if (_completedDetailGame is GameEntry g) DeleteCompletedArchive(g);
+    }
+
+    /// <summary>彻底删掉归档通关卡：条目与自定义海报一起消失（磁盘上保留的备份不受影响，
+    /// 之后仍可在「更多 → 未关联备份」里找回或删除；此操作不可恢复）。</summary>
+    private void DeleteCompletedArchive(GameEntry g)
+    {
+        var r = MessageBox.Show(this,
+            $"彻底删除《{g.DisplayName}》的完结档案？\n\n" +
+            "通关卡片、通关日期、游玩时长、自定义海报将永久消失，且无法恢复。\n" +
+            "磁盘上保留的游戏备份不受影响，可稍后在「更多 → 未关联备份」处理。",
+            "彻底删除档案", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (r != MessageBoxResult.OK) return;
+        // 仅删用户自定义海报；官方 {appId}.jpg 是 Steam 共享缓存，留着给将来重新入库用
+        try
+        {
+            if (g.HasCustomPoster && File.Exists(g.PosterFile)) File.Delete(g.PosterFile);
+        }
+        catch { }
+        Store.Games.Remove(g);
+        Store.Save();
+        BuildCompletedHostIfOpen();
+        if (CompletedDetail.Visibility == Visibility.Visible) CloseCompletedDetail();
+        ShowToast($"已彻底删除《{g.DisplayName}》的完结档案");
+    }
+
+    private static GameEntry? CompletedGameFromMenuItem(object s) =>
+        (s as MenuItem)?.Parent is ContextMenu cm
+            ? (cm.PlacementTarget as FrameworkElement)?.DataContext as GameEntry
+            : null;
+
+    private void OpenCompletedDateEditor(GameEntry g, FrameworkElement? anchor, System.Windows.Controls.Primitives.PlacementMode mode)
+    {
+        _completedDateTarget = g;
+        var d = g.CompletedAt == DateTime.MinValue ? DateTime.Today : g.CompletedAt.Date;
+        _suppressCompletedDateEvent = true;   // 程序化赋初值会触发 SelectedDatesChanged，抑制避免秒关
+        CompletedCalendar.SelectedDate = d;
+        CompletedCalendar.DisplayDate = d;
+        _suppressCompletedDateEvent = false;
+        CompletedDatePopup.PlacementTarget = anchor ?? BtnCompleted;
+        CompletedDatePopup.Placement = mode;
+        CompletedDatePopup.IsOpen = true;
+    }
+
+    private void OnCompletedDateChanged(object s, SelectionChangedEventArgs e)
+    {
+        if (_suppressCompletedDateEvent || _completedDateTarget == null) return;
+        if (CompletedCalendar.SelectedDate is not DateTime d) return;
+        var g = _completedDateTarget;
+        g.CompletedAt = d.Date;
+        g.Refresh();
+        Store.Save();
+        CompletedDatePopup.IsOpen = false;
+        BuildCompletedHostIfOpen();
+        ShowToast($"完结日期已改为 {d:yyyy}年{d.Month}月{d.Day}日");
+    }
+
+    private void OnCompletedTodayClick(object s, RoutedEventArgs e)
+    {
+        // 经 SelectedDatesChanged 走同一条生效路径（点日期即改即关）
+        CompletedCalendar.SelectedDate = DateTime.Today;
+    }
+
+    private void UnmarkCompleted(GameEntry g)
+    {
+        var r = MessageBox.Show(this,
+            $"取消《{g.DisplayName}》的完结标记？\n只从完结馆移除，备份和存档都不受影响。",
+            "取消完结", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (r != MessageBoxResult.OK) return;
+        g.CompletedAt = DateTime.MinValue;
+        // 海报关联保留（含用户自定义图）：未完结时不展示，重新标记免下载/免重选
+        g.Refresh();
+        Store.Save();
+        ApplyFilter();   // 完结状态变化：列表立即重排（回到正常位置）
+        BuildCompletedHostIfOpen();
+        // 从回顾详情里取消完结：该游戏已不在馆内，详情页随机关掉回到收藏墙
+        if (CompletedDetail.Visibility == Visibility.Visible) CloseCompletedDetail();
+        ShowToast("已移出完结馆");
+    }
+
     /// <summary>沿可视化/逻辑树向上查找指定类型的祖先。</summary>
     private static T? FindAncestor<T>(DependencyObject o) where T : DependencyObject
     {
@@ -1341,8 +1956,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OnFilterChanged(object s, RoutedEventArgs e)
     {
-        if (FiltAll == null || FiltSteam == null || FiltLocal == null) return;   // XAML 初始化期间触发
-        _filter = FiltSteam.IsChecked == true ? "steam" : FiltLocal.IsChecked == true ? "local" : "all";
+        if (FiltAll == null || FiltSteam == null || FiltLocal == null || FiltCompleted == null) return;   // XAML 初始化期间触发
+        _filter = FiltCompleted.IsChecked == true ? "completed"
+                 : FiltSteam.IsChecked == true ? "steam"
+                 : FiltLocal.IsChecked == true ? "local" : "all";
         ApplyFilter();
     }
 
@@ -1353,8 +1970,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         view.Filter = o =>
         {
             if (o is not GameEntry g) return false;
+            if (g.Archived) return false;   // 已移出游戏库、仅留完结档案的条目不在列表显示
             if (_filter == "steam" && !g.IsSteam) return false;
             if (_filter == "local" && g.IsSteam) return false;
+            if (_filter == "completed" && !g.IsCompleted) return false;   // 快捷筛选：只看已通关
             if (_keyword.Length == 0) return true;
             return g.DisplayName.ToLower().Contains(_keyword) || g.NameEN.ToLower().Contains(_keyword);
         };
@@ -1365,6 +1984,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             lcv.CustomSort = Comparer<GameEntry>.Create((a, b) =>
             {
                 if (a.Favorite != b.Favorite) return a.Favorite ? -1 : 1;
+                // 已完结游戏沉底（仅次于收藏置顶：手动加星的完结游戏仍尊重用户意图排在最前）
+                if (a.IsCompleted != b.IsCompleted) return a.IsCompleted ? 1 : -1;
                 int r;
                 if (_sortMode == 0)
                 {
@@ -1473,7 +2094,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const double CardTiltMaxCompress = 0.022;
 
     /// <summary>鼠标追踪的最小时间片（ms）：高轮询鼠标下避免无意义的过密属性写入。</summary>
-    private const int CardMoveThrottleMs = 8;
+    private const int CardMoveThrottleMs = 16;   // 对齐 60Hz 刷新率；8ms(125fps) 的中间帧屏幕根本不显示，纯浪费
 
     /// <summary>每张卡解析一次的特效元素缓存（存在 CardRoot.Tag 上）。
     /// 模板名称范围解析不便宜，绝不能在 MouseMove 里每次 FindName 六个名字。</summary>
@@ -1520,12 +2141,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return created;
     }
 
+    /// <summary>悬停卡片需要置顶的布局容器：主列表是 ListBoxItem；完结馆海报墙是 WrapPanel 里的
+    /// ContentControl（模板内不含 ContentControl，向上第一个即是卡片宿主）。</summary>
+    private static FrameworkElement? CardZHost(FrameworkElement root)
+        => FindAncestor<ListBoxItem>(root) ?? FindAncestor<ContentControl>(root) as FrameworkElement;
+
     private void OnCardMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not FrameworkElement root) return;
-        // 悬停卡片的 ListBoxItem 提到最高 ZIndex：放大的边缘与向下投影要盖在
-        // 相邻卡片之上，否则按列表顺序渲染时下方阴影会被下一张不透明卡片裁掉
-        if (FindAncestor<ListBoxItem>(root) is { } hoverItem && System.Windows.Controls.Panel.GetZIndex(hoverItem) != 1)
+        // 悬停卡片提到最高 ZIndex：放大的边缘与向下投影要盖在相邻卡片之上
+        if (CardZHost(root) is { } hoverItem && System.Windows.Controls.Panel.GetZIndex(hoverItem) != 1)
             System.Windows.Controls.Panel.SetZIndex(hoverItem, 1);
 
         CardFxState? fx = GetCardFx(root);
@@ -1592,8 +2217,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnCardMouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not FrameworkElement root) return;
-        // 离开时把 ListBoxItem 的 ZIndex 复位，恢复按列表顺序渲染
-        if (FindAncestor<ListBoxItem>(root) is { } leaveItem && System.Windows.Controls.Panel.GetZIndex(leaveItem) != 0)
+        // 离开时把卡片 ZIndex 复位，恢复按列表顺序渲染
+        if (CardZHost(root) is { } leaveItem && System.Windows.Controls.Panel.GetZIndex(leaveItem) != 0)
             System.Windows.Controls.Panel.SetZIndex(leaveItem, 0);
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -1615,9 +2240,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         lift?.BeginAnimation(TranslateTransform.YProperty, ResetAnim(0, ease));
         if (shadow != null)
         {
-            shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, ResetAnim(0, ease));
-            shadow.BeginAnimation(DropShadowEffect.ShadowDepthProperty, ResetAnim(0, ease));
+            // 性能：离开只淡出 Opacity；模糊半径/深度在淡出结束（380ms，阴影已不可见）后瞬间归零，
+            // 全程半径恒定，避免逐帧重新高斯模糊。BeginTime 延迟的 0 时长动画完成后 HoldEnd 保持 0。
             shadow.BeginAnimation(DropShadowEffect.OpacityProperty, ResetAnim(0.05, ease));
+            shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty,
+                new DoubleAnimation(0, TimeSpan.Zero) { BeginTime = TimeSpan.FromMilliseconds(380) });
+            shadow.BeginAnimation(DropShadowEffect.ShadowDepthProperty,
+                new DoubleAnimation(0, TimeSpan.Zero) { BeginTime = TimeSpan.FromMilliseconds(380) });
         }
 
         // 倾斜/暗角/扫光复位：未触发过 MouseMove 的卡没有缓存状态，全部本就是初值，跳过
@@ -1637,13 +2266,167 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static DoubleAnimation ResetAnim(double to, CubicEase ease)
         => new(to, TimeSpan.FromMilliseconds(380)) { EasingFunction = ease };
 
+    // ── 完结馆海报卡：真 3D 透视倾斜（Viewport2DVisual3D 平面 + PerspectiveCamera） ──
+    // 2D RenderTransform 只能做仿射（缩放/错切），做不出「近侧边缘放大」的透视梯形；
+    // 这里直接在 3D 平面上转 rotateX/rotateY，由透视相机天然产生近大远小。
+    private const double PosterTiltMaxAngle = 11.0;   // 最大转角（度）
+    private const double PosterLiftZ = 40.0;          // 悬停时向相机方向抬升，整体轻微放大
+    private const int PosterMoveThrottleMs = 8;
+
+    private sealed class PosterFx
+    {
+        public System.Windows.Media.Media3D.AxisAngleRotation3D RotX = null!;
+        public System.Windows.Media.Media3D.AxisAngleRotation3D RotY = null!;
+        public System.Windows.Media.Media3D.TranslateTransform3D Lift = null!;
+        public DropShadowEffect Shadow = null!;
+        public Border Glow = null!, ShadeX = null!, ShadeY = null!;
+        public RadialGradientBrush GlowBrush = null!;
+        public LinearGradientBrush ShadeXBrush = null!, ShadeYBrush = null!;
+        public int LastMoveTick;
+        public bool GlowLit;
+
+        public static PosterFx? TryCreate(FrameworkElement face)
+        {
+            try
+            {
+                if (face.FindName("PcRotX") is not System.Windows.Media.Media3D.AxisAngleRotation3D rx) return null;
+                if (face.FindName("PcRotY") is not System.Windows.Media.Media3D.AxisAngleRotation3D ry) return null;
+                if (face.FindName("PcLift") is not System.Windows.Media.Media3D.TranslateTransform3D lift) return null;
+                if (face.FindName("PcShadow") is not DropShadowEffect shadow) return null;
+                if (face.FindName("PcGlow") is not Border glow) return null;
+                if (face.FindName("PcGlowBrush") is not RadialGradientBrush glowBrush) return null;
+                if (face.FindName("PcShadeX") is not Border shadeX) return null;
+                if (face.FindName("PcShadeY") is not Border shadeY) return null;
+                if (face.FindName("PcShadeXBrush") is not LinearGradientBrush shadeXBrush) return null;
+                if (face.FindName("PcShadeYBrush") is not LinearGradientBrush shadeYBrush) return null;
+                return new PosterFx
+                {
+                    RotX = rx, RotY = ry, Lift = lift, Shadow = shadow,
+                    Glow = glow, GlowBrush = glowBrush,
+                    ShadeX = shadeX, ShadeY = shadeY,
+                    ShadeXBrush = shadeXBrush, ShadeYBrush = shadeYBrush,
+                };
+            }
+            catch { return null; }
+        }
+    }
+
+    private static PosterFx? GetPosterFx(FrameworkElement face)
+    {
+        if (face.Tag is PosterFx existing) return existing;
+        var created = PosterFx.TryCreate(face);
+        if (created != null) face.Tag = created;
+        return created;
+    }
+
+    private void OnPosterTiltEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement face) return;
+        if (CardZHost(face) is { } host && System.Windows.Controls.Panel.GetZIndex(host) != 1)
+            System.Windows.Controls.Panel.SetZIndex(host, 1);
+        if (GetPosterFx(face) is not PosterFx fx) return;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        fx.Shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty,
+            new DoubleAnimation(18, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+        fx.Shadow.BeginAnimation(DropShadowEffect.ShadowDepthProperty,
+            new DoubleAnimation(6, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+        fx.Shadow.BeginAnimation(DropShadowEffect.OpacityProperty,
+            new DoubleAnimation(0.45, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+        fx.Lift.BeginAnimation(System.Windows.Media.Media3D.TranslateTransform3D.OffsetZProperty,
+            new DoubleAnimation(PosterLiftZ, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+    }
+
+    private void OnPosterTiltMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement face) return;
+        PosterFx? fx = GetPosterFx(face);
+        if (fx is null || face.ActualWidth <= 0 || face.ActualHeight <= 0) return;
+
+        int tick = Environment.TickCount;
+        if (tick - fx.LastMoveTick < PosterMoveThrottleMs) return;
+        fx.LastMoveTick = tick;
+
+        System.Windows.Point q = e.GetPosition(face);
+        double nx = Math.Clamp(q.X / face.ActualWidth, 0, 1);
+        double ny = Math.Clamp(q.Y / face.ActualHeight, 0, 1);
+        double ax = (nx - 0.5) * 2.0;   // 右正：鼠标靠右时右侧边缘前倾（靠近相机 → 透视放大）
+        double ay = (ny - 0.5) * 2.0;   // 下正：鼠标靠上时上侧边缘后仰、靠下时下侧前倾（用户反馈此前方向反了）
+
+        fx.RotY.BeginAnimation(System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty, null);
+        fx.RotY.Angle = ax * PosterTiltMaxAngle;
+        fx.RotX.BeginAnimation(System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty, null);
+        fx.RotX.Angle = ay * PosterTiltMaxAngle;
+
+        // 横向暗角：前倾一侧压暗
+        fx.ShadeX.BeginAnimation(UIElement.OpacityProperty, null);
+        fx.ShadeX.Opacity = 0.55 * Math.Abs(ax);
+        if (ax >= 0)
+        {
+            fx.ShadeXBrush.StartPoint = new System.Windows.Point(1, 0);
+            fx.ShadeXBrush.EndPoint = new System.Windows.Point(0, 0);
+        }
+        else
+        {
+            fx.ShadeXBrush.StartPoint = new System.Windows.Point(0, 0);
+            fx.ShadeXBrush.EndPoint = new System.Windows.Point(1, 0);
+        }
+        // 纵向暗角
+        fx.ShadeY.BeginAnimation(UIElement.OpacityProperty, null);
+        fx.ShadeY.Opacity = 0.55 * Math.Abs(ay);
+        if (ay >= 0)
+        {
+            fx.ShadeYBrush.StartPoint = new System.Windows.Point(0, 0);
+            fx.ShadeYBrush.EndPoint = new System.Windows.Point(0, 1);
+        }
+        else
+        {
+            fx.ShadeYBrush.StartPoint = new System.Windows.Point(0, 1);
+            fx.ShadeYBrush.EndPoint = new System.Windows.Point(0, 0);
+        }
+
+        // 扫光圆心跟随鼠标（半径固定按 200 卡宽取）
+        fx.GlowBrush.Center = q;
+        fx.GlowBrush.GradientOrigin = q;
+        if (!fx.GlowLit)
+        {
+            fx.GlowLit = true;
+            fx.Glow.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(1, TimeSpan.FromMilliseconds(140))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                });
+        }
+    }
+
+    private void OnPosterTiltLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement face) return;
+        if (CardZHost(face) is { } host && System.Windows.Controls.Panel.GetZIndex(host) != 0)
+            System.Windows.Controls.Panel.SetZIndex(host, 0);
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        if (face.Tag is PosterFx fx)
+        {
+            fx.RotY.BeginAnimation(System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty, ResetAnim(0, ease));
+            fx.RotX.BeginAnimation(System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty, ResetAnim(0, ease));
+            fx.Lift.BeginAnimation(System.Windows.Media.Media3D.TranslateTransform3D.OffsetZProperty, ResetAnim(0, ease));
+            fx.ShadeX.BeginAnimation(UIElement.OpacityProperty, ResetAnim(0, ease));
+            fx.ShadeY.BeginAnimation(UIElement.OpacityProperty, ResetAnim(0, ease));
+            fx.GlowLit = false;
+            fx.Glow.BeginAnimation(UIElement.OpacityProperty, ResetAnim(0, ease));
+            fx.Shadow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, ResetAnim(0, ease));
+            fx.Shadow.BeginAnimation(DropShadowEffect.ShadowDepthProperty, ResetAnim(0, ease));
+            fx.Shadow.BeginAnimation(DropShadowEffect.OpacityProperty, ResetAnim(0.12, ease));
+        }
+    }
+
     private void UpdateSideFooters()
     {
         ICollectionView view = CollectionViewSource.GetDefaultView(Store.Games);
         int visible = 0;
         foreach (var item in view) visible++;
         SideCount.Text = $"共 {visible} 款游戏";
-        long totalBytes = Store.Games.Sum(g => g.Backups.Sum(b => b.Size));
+        long totalBytes = Store.Games.Where(g => !g.Archived).Sum(g => g.Backups.Sum(b => b.Size));
         double gb = totalBytes / 1024.0 / 1024.0 / 1024.0;
         double mb = totalBytes / 1024.0 / 1024.0;
         SideSize.Text = gb >= 1 ? $"备份占用 {gb:F1} GB" : $"备份占用 {mb:F1} MB";
@@ -2226,7 +3009,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _dbUpdateCts = new CancellationTokenSource();
         var ct = _dbUpdateCts.Token;
         StopDbBtn.Visibility = Visibility.Visible;
-        var games = Store.Games.ToList();
+        var games = Store.Games.Where(g => !g.Archived).ToList();
         try
         {
             // ① 先批量预取中文名到本地库（小黑盒，国内直连免加速器；连续网络失败会自动中止）
@@ -2614,13 +3397,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void OnRemoveGame(object s, RoutedEventArgs e)
     {
         if (SelectedGame is not GameEntry g) return;
+        bool keepArchive = g.IsCompleted;   // 已完结游戏：任何删除都保留完结档案，仅归档
         long bytes = 0;
         try { bytes = await Task.Run(() => BackupService.TotalBytesOnDisk(g)); } catch { }
         string sizeLine = bytes > 0
             ? $"该游戏的备份与玩家档案共占用 {BackupService.FormatBytes(bytes)}。\n\n"
             : "";
+        string archiveLine = keepArchive
+            ? "该游戏已进完结馆：移除后游戏列表不再显示，但完结馆会保留通关档案（海报、通关日期、游玩时长）；\n" +
+              "重新扫描或重新添加该游戏会自动复活档案；要彻底删掉通关卡，请到完结馆内操作。\n\n"
+            : "";
         var confirm = MessageBox.Show(this,
-            $"从库中移除「{g.DisplayName}」？\n\n{sizeLine}" +
+            $"从库中移除「{g.DisplayName}」？\n\n{archiveLine}{sizeLine}" +
             "「是」= 仅从库中移除，备份和玩家档案保留在磁盘上，以后重新添加该游戏会自动找回；\n" +
             "「否」= 连备份和玩家档案一起彻底删除（不可恢复）；\n" +
             "「取消」= 不做任何操作。",
@@ -2645,9 +3433,50 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 });
             }
             catch (Exception ex) { ShowToast("清理备份数据时出错：" + ex.Message, true); }
+            _playOpen.Remove(g.Id);   // 条目移除：进行中的游玩会话不再结算
+            if (keepArchive)
+            {
+                // 归档：条目保留（完结馆照常展示），列表/监控/备份运营全部跳过
+                if (purge)
+                {
+                    // 备份已从磁盘删光：条目上的死记录与玩家槽一并清空，档案只留通关成就
+                    g.Backups.Clear();
+                    g.VisibleBackups.Clear();
+                    g.Players.Clear();
+                    g.ActiveProfile = "";
+                    g.AutoBackup = false;
+                    g.HotSnapshot = false;
+                    g.CloudAuto = false;
+                }
+                // 图标按 GUID 缓存，复活后会重新抽取，归档卡片走海报/封面兜底
+                try { if (!string.IsNullOrEmpty(g.IconFile) && File.Exists(g.IconFile)) File.Delete(g.IconFile); } catch { }
+                g.IconFile = "";
+                g.IsRunning = false;
+                g.Archived = true;
+                Store.Save();
+                SelectedGame = null;
+                GamesList.SelectedItem = null;
+                ApplyFilter();
+                BuildCompletedHostIfOpen();
+                UpdateSideFooters();
+                ShowToast(purge
+                    ? $"已移除「{g.DisplayName}」；完结馆已保留通关档案"
+                    : $"已移除「{g.DisplayName}」；备份已保留，完结馆档案仍在");
+                return;
+            }
             // 图标按 GUID 缓存，移除后再无引用，一并清理；封面按 AppId 共享保留
             try { if (!string.IsNullOrEmpty(g.IconFile) && File.Exists(g.IconFile)) File.Delete(g.IconFile); } catch { }
-            _playOpen.Remove(g.Id);   // 条目删除：进行中的游玩会话不再结算
+            // 手换海报按 AppId 留档（custom_app_{appId}.jpg）：重新添加同一游戏时零网络认领
+            try
+            {
+                if (g.AppId > 0 && g.HasCustomPoster)
+                {
+                    string keepPoster = Store.PosterCustomAppFileFor(g.AppId);
+                    if (File.Exists(keepPoster)) File.Delete(keepPoster);
+                    File.Move(g.PosterFile, keepPoster);
+                }
+            }
+            catch { }
             Store.Games.Remove(g);
             Store.Save();
             SelectedGame = null;
@@ -2658,6 +3487,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 : $"已移除「{g.DisplayName}」，备份已保留，重新添加游戏即可找回");
         }
         finally { SetBusy(false); }
+    }
+
+    /// <summary>工具栏「⋯ 更多」：低频维护项——未关联备份、更新存档规则。</summary>
+    private void OnMoreMenuClick(object s, RoutedEventArgs e)
+    {
+        if (s is not FrameworkElement btn) return;
+        var cm = new ContextMenu();
+        var miBackup = new MenuItem { Header = "🗂 未关联备份" };
+        miBackup.ToolTip = "管理已从库中移除的游戏留下的备份，可找回或删除";
+        miBackup.Click += (snd, ev) => OnOpenBackupDir(snd, ev);
+        var miWiki = new MenuItem { Header = "🌐 更新存档规则" };
+        miWiki.ToolTip = "强制联网更新全部游戏的 Wiki 存档规则与缺失的中文名";
+        miWiki.Click += (snd, ev) => OnRefreshAllWiki(snd, ev);
+        cm.Items.Add(miBackup);
+        cm.Items.Add(miWiki);
+        cm.PlacementTarget = btn;
+        cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        cm.IsOpen = true;
     }
 
     private void OnOpenBackupDir(object s, RoutedEventArgs e)
@@ -2687,22 +3534,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     // ── 自动备份监视（轮询进程退出）+ 运行中定时快照 ───────
-    private void WatchTick(object? s, EventArgs e)
+    private int _watchTickBusy;   // 0=空闲 1=本轮进程枚举仍在后台；防止慢轮询（>1s）与下一轮叠加
+
+    private async void WatchTick(object? s, EventArgs e)
     {
         // 手动备份/还原/玩家操作/扫描进行中：本轮跳过，避免与后台任务并发改集合、互写 zip
         if (_busyDepth > 0) return;
+        // 重入保护：上一轮后台枚举还没回来直接跳过（重叠枚举只会成倍放大卡顿）
+        if (Interlocked.Exchange(ref _watchTickBusy, 1) == 1) return;
         // 每轮只快照一次全部进程名（供外部启动的游戏按名匹配）：88 个游戏各枚举一次 → 一轮一次
-        var runningNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // 性能：Process.GetProcesses() 要逐进程开句柄读名字，系统繁忙时单次可冻 UI 线程 1 秒以上，
+        // 必须放到后台线程枚举，只把结果集带回 UI 线程做状态更新。
+        HashSet<string> runningNames;
         try
         {
-            foreach (var p in Process.GetProcesses())
+            runningNames = await Task.Run(() =>
             {
-                try { runningNames.Add(p.ProcessName); }
-                finally { p.Dispose(); }
-            }
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in Process.GetProcesses())
+                {
+                    try { names.Add(p.ProcessName); }
+                    finally { p.Dispose(); }
+                }
+                return names;
+            });
         }
-        catch { /* 枚举受限：本轮退化为不识别外部启动游戏，下轮再试；PID 跟踪不受影响 */ }
-        foreach (var g in Store.Games.Where(g => g.ExePath.Length > 0).ToList())
+        catch
+        {
+            /* 枚举受限：本轮退化为不识别外部启动游戏，下轮再试；PID 跟踪不受影响 */
+            Interlocked.Exchange(ref _watchTickBusy, 0);
+            return;
+        }
+        try
+        {
+        foreach (var g in Store.Games.Where(g => !g.Archived && g.ExePath.Length > 0).ToList())
         {
             bool running = CheckGameRunningState(g, runningNames);
             if (running)
@@ -2747,6 +3612,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
         UpdateStatusBar();
+        }
+        finally { Interlocked.Exchange(ref _watchTickBusy, 0); }
     }
 
     /// <summary>游戏运行状态检测：本应用用 exe 启动过的游戏优先认记录的 PID（同名进程不再误判），
@@ -2904,7 +3771,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         StatusLeft.Text = _lastAutoBackup == DateTime.MinValue
             ? ""
             : $"最近一次自动备份：{_lastAutoBackup:MM-dd HH:mm}";
-        int watching = Store.Games.Count(g => g.AutoBackup);
+        int watching = Store.Games.Count(g => !g.Archived && g.AutoBackup);
         StatusRight.Text = $"已开启自动备份：{watching} 个游戏 · 备份位置 {Store.BackupRoot}";
     }
 

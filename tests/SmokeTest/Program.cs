@@ -1588,6 +1588,35 @@ else
         Check("严格还原: 快照内文件正常还原",
             File.Exists(Path.Combine(dirA, "keep.txt")), "keep.txt missing");
 
+        // 25.4 手动封面命名归一化：custom_{gameId}.* → 官方下载同款 {appId}.jpg
+        Directory.CreateDirectory(Store.CoversDir);
+        var gCover = new GameEntry { NameCN = "封面迁移测试", AppId = 555001 };
+        string oldCover = Path.Combine(Store.CoversDir, "custom_" + gCover.Id + ".jpg");
+        File.WriteAllBytes(oldCover, new byte[] { 1, 2, 3, 4, 5 });
+        gCover.CoverFile = oldCover;
+        Store.Games.Add(gCover);
+        string orphan = Path.Combine(Store.CoversDir, "custom_orphan.jpg");
+        File.WriteAllBytes(orphan, new byte[] { 9 });
+        var gNoApp = new GameEntry { NameCN = "学习版无AppId" };
+        string keepCover = Path.Combine(Store.CoversDir, "custom_" + gNoApp.Id + ".png");
+        File.WriteAllBytes(keepCover, new byte[] { 7, 8 });
+        gNoApp.CoverFile = keepCover;
+        Store.Games.Add(gNoApp);
+        Store.Save();
+
+        var coverLog = DataMigration.NormalizeCustomCovers();
+        string canonicalCover = Store.CoverFileFor(555001);
+        Check("迁移: 手动封面改名为官方同款 {appId}.jpg 且内容一致",
+            File.Exists(canonicalCover)
+            && File.ReadAllBytes(canonicalCover).SequenceEqual(new byte[] { 1, 2, 3, 4, 5 })
+            && gCover.CoverFile == canonicalCover, $"ref={gCover.CoverFile}");
+        Check("迁移: 旧 custom_ 封面文件已删除", !File.Exists(oldCover), oldCover);
+        Check("迁移: 无引用的 custom_ 孤儿被清理", !File.Exists(orphan), "orphan kept");
+        Check("迁移: AppId=0 的学习版封面保留原名",
+            File.Exists(keepCover) && gNoApp.CoverFile == keepCover, gNoApp.CoverFile);
+        var coverLog2 = DataMigration.NormalizeCustomCovers();
+        Check("迁移: 封面归一化幂等（二次执行零改动）", coverLog2.Count == 0, $"again={coverLog2.Count}");
+
         Store.HomeDirOverride = null;
     }
 
@@ -4041,8 +4070,13 @@ else
     Check("MainWindow.xaml 源文件可读取", xamlText44.Length > 0, xaml44);
     // 性能回归守卫：3D 方案每张卡分配宿主纹理，且 Collapsed 徽章撑大渲染边界曾导致图标横压。
     // 只认真实 XAML 元素标签，避免命中说明性注释
-    Check("卡片模板不再使用 Viewport3D", !xamlText44.Contains("<Viewport3D"), "");
-    Check("卡片模板不再使用 Viewport2DVisual3D", !xamlText44.Contains("<Viewport2DVisual3D"), "");
+    // 性能回归守卫：主列表卡曾用 3D 方案（每张卡分配宿主纹理），后改为纯 2D。
+    // 注意：守卫范围仅限 GameListItem 模板切片——完结馆海报卡（CompletedCard）刻意使用 Viewport2DVisual3D。
+    int listTplStart44 = xamlText44.IndexOf("<DataTemplate x:Key=\"GameListItem\"", StringComparison.Ordinal);
+    string listTpl44 = listTplStart44 < 0 ? "" : xamlText44.Substring(listTplStart44,
+        xamlText44.IndexOf("</DataTemplate>", listTplStart44, StringComparison.Ordinal) - listTplStart44);
+    Check("主列表卡模板不再使用 Viewport3D", listTpl44.Length > 0 && !listTpl44.Contains("<Viewport3D"), "");
+    Check("主列表卡模板不再使用 Viewport2DVisual3D", listTpl44.Length > 0 && !listTpl44.Contains("<Viewport2DVisual3D"), "");
     // 纯 2D 三件套：放大上浮层 / ScaleX 倾斜执行器 / 方向暗角
     bool hasLift44 = xamlText44.Contains("x:Name=\"LiftHost\"") && xamlText44.Contains("x:Name=\"CardScale\"");
     bool hasTilt44 = xamlText44.Contains("x:Name=\"CardTilt\"");
@@ -4411,9 +4445,42 @@ else
     Check("Dark.xaml 同样定义 ToastText/ToastErrorText",
         ThemeColor47(darkXaml47, "ToastText").Length > 0
         && ThemeColor47(darkXaml47, "ToastErrorText").Length > 0, "");
+
+    // 完结纪念卡：三套主题必须各自定义全套 Memorial* 配色（缺键会导致某主题下卡面透明/黑字）
+    // 同时支持 <SolidColorBrush x:Key Color=".."/> 与 <Color x:Key>..</Color> 两种写法
+    string MemVal47(string xaml, string key)
+    {
+        var m1 = System.Text.RegularExpressions.Regex.Match(xaml,
+            @"x:Key=""" + System.Text.RegularExpressions.Regex.Escape(key) + @"""\s+Color=""(#[0-9A-Fa-f]{6})""");
+        if (m1.Success) return m1.Groups[1].Value;
+        var m2 = System.Text.RegularExpressions.Regex.Match(xaml,
+            @"x:Key=""" + System.Text.RegularExpressions.Regex.Escape(key) + @"""\s*>(#[0-9A-Fa-f]{6})<");
+        return m2.Success ? m2.Groups[1].Value : "";
+    }
+    string[] memKeys47 = { "MemorialBgTop", "MemorialBgBottom", "MemorialGoldHi", "MemorialGoldLo",
+        "MemorialBorder", "MemorialTitle", "MemorialMuted", "MemorialValue", "MemorialSince", "MemorialDivider" };
+    foreach (string memFile in new[] { "Dark.xaml", "Light.xaml", "LightSoft.xaml" })
+    {
+        string mx47 = File.ReadAllText(Path.Combine(themesDir47, memFile));
+        int missing47 = memKeys47.Count(k => !mx47.Contains("x:Key=\"" + k + "\""));
+        Check($"{memFile} 定义纪念卡全套 Memorial* 配色（缺 {missing47} 个）", missing47 == 0, "");
+        if (memFile != "Dark.xaml")
+        {
+            // 浅色主题：浅底深字。数值 14px 按普通文本 ≥4.5；日期金色渐变深端 ≥3（23px 粗体大字）
+            string memBg47 = MemVal47(mx47, "MemorialBgTop");
+            double valRatio47 = Ratio47(MemVal47(mx47, "MemorialValue"), memBg47);
+            double dateRatio47 = Ratio47(MemVal47(mx47, "MemorialGoldLo"), memBg47);
+            Check($"{memFile} 纪念卡数值/日期在浅底上可读（数值 {valRatio47:0.0}≥4.5, 日期 {dateRatio47:0.0}≥3）",
+                valRatio47 >= 4.5 && dateRatio47 >= 3, "");
+        }
+    }
     // Toast 绑定与错误态切换守卫
     string mainXaml47 = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
         "..", "..", "..", "..", "..", "src", "GameSaveManager", "MainWindow.xaml")));
+    Check("纪念卡 XAML 全部引用主题色（无硬编码金色/底色）",
+        mainXaml47.Contains("DynamicResource MemorialGoldHi}")
+        && mainXaml47.Contains("DynamicResource MemorialBorder}")
+        && !mainXaml47.Contains("#EBDDAA") && !mainXaml47.Contains("#1E212B"), "");
     Check("Toast 文字绑定 ToastText 语义色（不再用 TextPrimary）",
         mainXaml47.Contains("x:Name=\"ToastText\"") && mainXaml47.Contains("Foreground=\"{DynamicResource ToastText}\""), "");
     // Toast 必须在左下角（居中会压住详情区底部「退出游戏时备份」等按钮），且有 MaxWidth+换行兜底
@@ -5881,7 +5948,8 @@ else
         Check("游玩提速: 监视轮询间隔 1 秒",
             mainCs57.Contains("_watchTimer = new() { Interval = TimeSpan.FromSeconds(1) }"), "");
         Check("游玩提速: 每轮只快照一次全部进程名",
-            mainCs57.Contains("var runningNames = new HashSet<string>")
+            mainCs57.Contains("HashSet<string> runningNames;")
+            && mainCs57.Contains("await Task.Run")
             && mainCs57.Contains("foreach (var p in Process.GetProcesses())"), "");
     }
 
@@ -6275,6 +6343,482 @@ else
         Store.Settings.IncrementalEnabled = svInc59;
     }
 
+    // ── 60. 完结馆：完结字段/派生文案/海报判定与持久化往返，入口/覆盖层/海报卡/日历/操作栏接线守卫 ──
+    {
+        string vault60 = Path.Combine(temp, "vault60");
+        Store.HomeDirOverride = vault60;
+        Store.Init();
+
+        var g60 = new GameEntry { NameEN = "HallOfFame60" };
+        Check("完结馆: 新游戏默认未完结且派生文案/月份键全空",
+            !g60.IsCompleted && !g60.HasPoster
+            && g60.CompletedDateText == "" && g60.CompletedShortText == ""
+            && g60.CompletedFullText == "" && g60.CompletedMonthKey == "", "");
+
+        g60.CompletedAt = new DateTime(2026, 9, 15);
+        Check("完结馆: 标记后日期文案与月份键正确（2026/09/15、9/15、2026年9月15日完结、2026-09）",
+            g60.IsCompleted
+            && g60.CompletedDateText == "2026/09/15"
+            && g60.CompletedShortText == "9/15"
+            && g60.CompletedFullText == "2026年9月15日完结"
+            && g60.CompletedMonthKey == "2026-09", "");
+
+        // 海报：空→占位；指向真实文件→有海报；null 容错
+        Check("完结馆: PosterFile 空时无海报走首字占位", !g60.HasPoster, "");
+        string poster60 = Path.Combine(temp, "p60.jpg");
+        File.WriteAllBytes(poster60, new byte[] { 1, 2, 3 });
+        g60.PosterFile = poster60;
+        Check("完结馆: PosterFile 指向真实文件时 HasPoster 为真", g60.HasPoster, "");
+        g60.PosterFile = null!;
+        Check("完结馆: PosterFile 赋 null 容错为空串不崩", g60.PosterFile == "" && !g60.HasPoster, "");
+        g60.PosterFile = poster60;
+
+        Store.Games.Add(g60);
+        Store.Save();
+        var disk60 = System.Text.Json.JsonSerializer.Deserialize<List<GameEntry>>(
+            File.ReadAllText(Store.GamesFile))!;
+        var g60b = disk60.Single(x => x.NameEN == "HallOfFame60");
+        Check("完结馆: CompletedAt/PosterFile 随 games.json 落盘往返",
+            g60b.CompletedAt == new DateTime(2026, 9, 15) && g60b.PosterFile == poster60
+            && g60b.IsCompleted && g60b.CompletedMonthKey == "2026-09", "");
+
+        // 取消完结：MinValue 落盘后仍为未完结
+        g60.CompletedAt = DateTime.MinValue;
+        Store.Save();
+        var g60c = System.Text.Json.JsonSerializer.Deserialize<List<GameEntry>>(
+            File.ReadAllText(Store.GamesFile))!.Single(x => x.NameEN == "HallOfFame60");
+        Check("完结馆: 取消完结（MinValue）落盘后未完结、月份键清空",
+            !g60c.IsCompleted && g60c.CompletedMonthKey == "", "");
+
+        Check("完结馆: PosterFileFor 按 AppId 落 cache/posters 目录",
+            Store.PosterFileFor(123).EndsWith(Path.Combine("cache", "posters", "123.jpg")), "");
+        Check("完结馆: 自定义海报按 custom_{gameId}.jpg 落 posters 目录",
+            Store.PosterCustomFileFor("abc").EndsWith(Path.Combine("cache", "posters", "custom_abc.jpg")), "");
+
+        // 展示兜底链：竖海报 → 横封面 → 图标 → 空（首字占位）
+        string icon60 = Path.Combine(temp, "i60.png");
+        string cover60 = Path.Combine(temp, "c60.jpg");
+        File.WriteAllBytes(icon60, new byte[] { 1 });
+        File.WriteAllBytes(cover60, new byte[] { 1 });
+        g60.PosterFile = "";
+        g60.CoverFile = "";
+        g60.IconFile = icon60;
+        Check("兜底链: 无海报无封面时用图标",
+            g60.PosterDisplayFile == icon60 && g60.HasPosterDisplay && !g60.HasCustomPoster, "");
+        g60.CoverFile = cover60;
+        Check("兜底链: 封面优先于图标", g60.PosterDisplayFile == cover60, "");
+        string custom60 = Path.Combine(temp, "custom_" + g60.Id + ".jpg");
+        File.WriteAllBytes(custom60, new byte[] { 1 });
+        g60.PosterFile = custom60;
+        Check("兜底链: 自定义竖海报最优先且可识别",
+            g60.PosterDisplayFile == custom60 && g60.HasCustomPoster, "");
+        g60.PosterFile = poster60;
+        Check("兜底链: 官方竖海报不算自定义", !g60.HasCustomPoster, "");
+        g60.PosterFile = ""; g60.CoverFile = ""; g60.IconFile = "";
+        Check("兜底链: 三图皆空→空串显示首字占位",
+            g60.PosterDisplayFile == "" && !g60.HasPosterDisplay, "");
+
+        // ── 静态接线守卫 ──
+        string srcRoot60 = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..", "src", "GameSaveManager"));
+        string entryCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Models", "GameEntry.cs"));
+        Check("完结馆: GameEntry 持久化 CompletedAt/PosterFile 并暴露月份键与日期文案",
+            entryCs60.Contains("public DateTime CompletedAt")
+            && entryCs60.Contains("public string PosterFile")
+            && entryCs60.Contains("public bool IsCompleted")
+            && entryCs60.Contains("public bool HasPoster")
+            && entryCs60.Contains("CompletedMonthKey"), "");
+        string storeCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "Store.cs"));
+        Check("完结馆: Store 暴露海报缓存目录与按 AppId 路径",
+            storeCs60.Contains("Path.Combine(BaseDir, \"cache\", \"posters\")")
+            && storeCs60.Contains("public static string PosterFileFor(int appId)"), "");
+        string steamCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "SteamApi.cs"));
+        Check("完结馆: SteamApi 可下载竖版海报 library_600x900.jpg",
+            steamCs60.Contains("public static Task<bool> DownloadPoster(int appId, string saveTo)")
+            && steamCs60.Contains("\"library_600x900.jpg\""), "");
+        Check("海报: 新游戏哈希图床兜底（GetItems 免 key 取 library_capsule/header，四主机轮试）",
+            steamCs60.Contains("IStoreBrowseService/GetItems/v1/")
+            && steamCs60.Contains("FetchStoreAssetsAsync")
+            && steamCs60.Contains("include_assets")
+            && steamCs60.Contains("\"library_capsule\"")
+            && steamCs60.Contains("store_item_assets")
+            && steamCs60.Contains("shared.cloudflare.steamstatic.com")
+            && steamCs60.Contains("shared.akamai.steamstatic.com")
+            && steamCs60.Contains("steamcdn-a.akamaihd.net"), "");
+
+        string xaml60 = File.ReadAllText(Path.Combine(srcRoot60, "MainWindow.xaml"));
+        Check("完结馆: 工具栏入口按钮（纯文字，按用户要求不显示数量徽章）",
+            xaml60.Contains("<Button x:Name=\"BtnCompleted\"")
+            && xaml60.Contains("Click=\"OnOpenCompleted\"")
+            && xaml60.Contains("Content=\"🏆 完结馆\"")
+            && !xaml60.Contains("CompletedCountBadge")
+            && !xaml60.Contains("CompletedCountText"), "");
+        Check("完结馆: 覆盖层视图/返回/副标题/空状态/卡片宿主齐全",
+            xaml60.Contains("<Border x:Name=\"CompletedView\" Grid.Row=\"1\"")
+            && xaml60.Contains("x:Name=\"BtnCompletedBack\"")
+            && xaml60.Contains("Click=\"OnCloseCompleted\"")
+            && xaml60.Contains("x:Name=\"CompletedSummary\"")
+            && xaml60.Contains("x:Name=\"CompletedHost\"")
+            && xaml60.Contains("x:Name=\"CompletedEmpty\""), "");
+        Check("完结馆: 按月份/按年份/全部分组 chip 绑定同一切换事件",
+            xaml60.Contains("x:Name=\"CompletedGroupMonth\"")
+            && xaml60.Contains("Content=\"按月份\"")
+            && xaml60.Contains("x:Name=\"CompletedGroupYear\"")
+            && xaml60.Contains("Content=\"按年份\"")
+            && xaml60.Contains("x:Name=\"CompletedGroupAll\"")
+            && xaml60.Contains("Checked=\"OnCompletedModeChanged\""), "");
+        // 卡片切片锚定 DataTemplate 标签，避开上方同名注释
+        int cardStart60 = xaml60.IndexOf("<DataTemplate x:Key=\"CompletedCard\"");
+        string card60 = cardStart60 < 0
+            ? ""
+            : xaml60.Substring(cardStart60,
+                xaml60.IndexOf("</DataTemplate>", cardStart60) - cardStart60);
+        Check("完结馆: 竖版 200x300 海报卡（真3D透视倾斜/单击进回顾/右键改日期+取消/完结日期绑定/卡距12）",
+            cardStart60 >= 0
+            && card60.Contains("Width=\"200\"") && card60.Contains("Height=\"300\"")
+            && card60.Contains("Margin=\"0,0,12,12\"")
+            && card60.Contains("<Viewport2DVisual3D")
+            && card60.Contains("<PerspectiveCamera")
+            && card60.Contains("<AmbientLight")   // 无灯时 VisualHost 在部分 GPU 上纯黑（已实测复现）
+            && card60.Contains("x:Name=\"PcRotX\"")
+            && card60.Contains("x:Name=\"PcRotY\"")
+            && card60.Contains("MouseMove=\"OnPosterTiltMove\"")
+            && card60.Contains("MouseEnter=\"OnPosterTiltEnter\"")
+            && card60.Contains("MouseLeave=\"OnPosterTiltLeave\"")
+            && card60.Contains("x:Name=\"PcShadeX\"")
+            && card60.Contains("x:Name=\"PcShadeY\"")
+            && card60.Contains("x:Name=\"PcGlow\"")
+            && !card60.Contains("CornerRadius")   // 全直角
+            && card60.Contains("MouseLeftButtonUp=\"OnCompletedCardClick\"")
+            && card60.Contains("Click=\"OnCompletedEditDate\"")
+            && card60.Contains("Click=\"OnCompletedUnmark\"")
+            && card60.Contains("{Binding CompletedDateText}"), "");
+        Check("完结馆: 馆内「完结回顾」详情层（返回/运行/改日期/取消/在列表查看 + 游玩统计 + 会话列表）",
+            xaml60.Contains("x:Name=\"CompletedDetail\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailBack\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailRun\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailEditDate\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailUnmark\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailLocate\"")
+            && xaml60.Contains("x:Name=\"CdStatCount\"")
+            && xaml60.Contains("x:Name=\"CdStatWeek7\"")
+            && xaml60.Contains("x:Name=\"CdSessionList\"")
+            && xaml60.Contains("{Binding TotalPlayText}")
+            && xaml60.Contains("{Binding CompletedFullText}")
+            && xaml60.Contains("{Binding AddedAtText}")
+            // 头部右侧完结纪念卡（填满右半空白）：完结日大字/星期/通关用时/完结至今
+            && xaml60.Contains("x:Name=\"CdMemorialDate\"")
+            && xaml60.Contains("x:Name=\"CdMemorialSpan\"")
+            && xaml60.Contains("x:Name=\"CdMemorialSince\"")
+            && xaml60.Contains("完结纪念")
+            // 统计单行 6 格、记录区内部限高滚动，整页不超屏
+            && xaml60.Contains("<UniformGrid Columns=\"6\"")
+            && xaml60.Contains("MaxHeight=\"168\""), "");
+        Check("完结馆: 日历 Popup（选日期生效 + 回到今天）",
+            xaml60.Contains("x:Name=\"CompletedDatePopup\"")
+            && xaml60.Contains("x:Name=\"CompletedCalendar\"")
+            && xaml60.Contains("SelectedDatesChanged=\"OnCompletedDateChanged\"")
+            && xaml60.Contains("x:Name=\"CompletedTodayBtn\"")
+            && xaml60.Contains("Click=\"OnCompletedTodayClick\""), "");
+        Check("完结馆: 详情操作栏「完结撒花」与绿色「已完结」两态按钮",
+            xaml60.Contains("x:Name=\"BtnMarkCompleted\"")
+            && xaml60.Contains("Content=\"🏆 完结撒花\"")
+            && !xaml60.Contains("标记完结")   // 玩家用语已改名，旧文案不得残留
+            && xaml60.Contains("Click=\"OnMarkCompleted\"")
+            && xaml60.Contains("x:Name=\"BtnCompletedDone\"")
+            && xaml60.Contains("Click=\"OnCompletedDoneClick\"")
+            && xaml60.Contains("{Binding CompletedShortText}"), "");
+        // 详情横幅底部恒叠黑色压暗遮罩，标题/副标题必须固定浅色 + 黑色包围光晕（浅色主题下深字压暗底会看不清）
+        int heroTitle60 = xaml60.IndexOf("Text=\"{Binding DisplayName}\" FontSize=\"22\"", StringComparison.Ordinal);
+        string heroTitleBlock60 = heroTitle60 >= 0 ? xaml60.Substring(heroTitle60, 750) : "";
+        Check("详情横幅: 黑色压暗遮罩 + 标题固定浅色 + 标题/副标题黑色包围光晕",
+            xaml60.Contains("#EE000000")
+            && heroTitleBlock60.Contains("Foreground=\"#F5F7FA\"")
+            && heroTitleBlock60.Contains("Foreground=\"#C3C9D5\"")
+            && !heroTitleBlock60.Contains("DynamicResource TextPrimary")
+            && !heroTitleBlock60.Contains("DynamicResource TextSecondary")
+            // 光晕：标题 Blur5/Depth0，副标题 Blur4/Depth0（零偏移=四周包围，非投影）
+            && xaml60.Contains("BlurRadius=\"5\" ShadowDepth=\"0\"")
+            && xaml60.Contains("BlurRadius=\"4\" ShadowDepth=\"0\""), "");
+        // ── 全界面「文字显示不全」修复守卫（8 项布局兜底，防止回退成固定宽硬切） ──
+        // 1) 详情横幅按钮行必须 WrapPanel（窄窗口换行，末尾按钮不被挤出）
+        int heroBtns60 = xaml60.IndexOf("Content=\"▶ 运行游戏\"", StringComparison.Ordinal);
+        string heroWrap60 = heroBtns60 >= 0 ? xaml60.Substring(Math.Max(0, heroBtns60 - 900), 900) : "";
+        Check("横幅按钮行: WrapPanel 自动换行", heroWrap60.Contains("<WrapPanel"), "");
+        // 2) 备份行按钮 MinWidth（不再固定 Width 硬切字）
+        Check("备份行: 旧固定宽度按钮已全部改为 MinWidth",
+            xaml60.Contains("<Button MinWidth=\"92\"")
+            && xaml60.Contains("Content=\"改名\" MinWidth=\"46\"")
+            && xaml60.Contains("Content=\"还原\" MinWidth=\"46\"")
+            && xaml60.Contains("Content=\"删除\" MinWidth=\"46\"")
+            && !xaml60.Contains("<Button Width=\"92\"")
+            && !xaml60.Contains("Content=\"改名\" Width=\"46\""), "");
+        // 3) 玩家筹码名字 MaxWidth+省略号+悬停全文
+        Check("玩家筹码: 名字超长省略号 + ToolTip",
+            xaml60.Contains("Text=\"{Binding Name}\" VerticalAlignment=\"Center\"")
+            && xaml60.Contains("MaxWidth=\"108\" TextTrimming=\"CharacterEllipsis\""), "");
+        // 6) 完结统计备份格省略号兜底
+        Check("完结详情: 存档备份统计省略号兜底",
+            xaml60.Contains("x:Name=\"CdStatBackups\"") && xaml60.Substring(xaml60.IndexOf("x:Name=\"CdStatBackups\"", StringComparison.Ordinal), 300).Contains("TextTrimming=\"CharacterEllipsis\""), "");
+        // 7) 侧栏底部统计两列防重叠
+        Check("侧栏底部: 计数/容量两列布局带省略号",
+            xaml60.Contains("x:Name=\"SideCount\"") && xaml60.Contains("x:Name=\"SideSize\"")
+            && xaml60.Substring(xaml60.IndexOf("x:Name=\"SideSize\"", StringComparison.Ordinal) - 200, 260).Contains("TextTrimming=\"CharacterEllipsis\""), "");
+        // 8) Wiki 重试按钮与添加路径同行排列（旧硬编码 104 让位已删除）
+        Check("存档位置: Wiki重试/添加路径同行不重叠",
+            !xaml60.Contains("Margin=\"0,0,104,0\"") && xaml60.Contains("Content=\"⚠ Wiki 获取失败 · 点击重试\""), "");
+        // 4) 云浏览：玩家/大小/时间单元格省略号，窄列加宽
+        string cloudXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "CloudBrowserWindow.xaml"));
+        Check("云浏览: 玩家/大小/时间省略号兜底 + 玩家列加宽到 96",
+            cloudXaml60.Contains("x:Key=\"CProfile\"") && cloudXaml60.Contains("Header=\"玩家\" Width=\"96\"")
+            && cloudXaml60.Contains("Header=\"大小\" Width=\"82\"")
+            && cloudXaml60.Substring(cloudXaml60.IndexOf("x:Key=\"CProfile\"", StringComparison.Ordinal), 180).Contains("TextTrimming=\"CharacterEllipsis\""), "");
+        // 5) 未关联备份：内容/占用/最近文件列改为省略号 CellTemplate（不再 DisplayMemberBinding 硬切）
+        string orphanXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "OrphanBackupsWindow.xaml"));
+        Check("未关联备份: 三列省略号 CellTemplate（无 DisplayMemberBinding 硬切）",
+            !orphanXaml60.Contains("DisplayMemberBinding")
+            && orphanXaml60.Contains("Text=\"{Binding DetailText}\"")
+            && orphanXaml60.Contains("Text=\"{Binding SizeText}\""), "");
+        // 5b) 未关联备份：五列固定总宽曾达 710 > 窄窗可用宽，操作列被裁；现首列弹性（SizeChanged 分配）
+        string orphanCs60 = File.ReadAllText(Path.Combine(srcRoot60, "OrphanBackupsWindow.xaml.cs"));
+        Check("未关联备份: 名称列弹性伸缩（SizeChanged），操作列窄窗不被裁",
+            orphanXaml60.Contains("x:Name=\"ColName\"") && orphanXaml60.Contains("SizeChanged=\"OnOrphanListSizeChanged\"")
+            && orphanXaml60.Contains("Header=\"操作\" Width=\"104\"")
+            && !orphanXaml60.Contains("Header=\"操作\" Width=\"140\"")
+            && orphanCs60.Contains("OnOrphanListSizeChanged"), "");
+        // 完结回顾顶栏：右列 5 按钮在窄窗/宽侧栏下会挤出，改 WrapPanel 折行
+        int cdWrap60 = xaml60.IndexOf("<WrapPanel Grid.Column=\"1\" HorizontalAlignment=\"Right\"", StringComparison.Ordinal);
+        string cdBar60 = cdWrap60 >= 0 ? xaml60.Substring(cdWrap60, 1800) : "";
+        Check("完结回顾顶栏: 按钮组 WrapPanel 自动折行",
+            cdWrap60 >= 0 && cdBar60.Contains("x:Name=\"BtnCdLocate\"")
+            && cdBar60.Contains("x:Name=\"BtnCdDeleteArchive\""), "");
+        // 6b) 游玩详情：总时长/平均/近7/近30/导入日期数值省略号兜底
+        string statsXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "PlayStatsWindow.xaml"));
+        Check("游玩详情: 六个数值格省略号兜底",
+            new[] { "Text=\"{Binding Added}\"", "Text=\"{Binding Total}\"", "Text=\"{Binding Average}\"",
+                    "Text=\"{Binding Week7}\"", "Text=\"{Binding Week30}\"" }
+            .All(a => { int q = statsXaml60.IndexOf(a, StringComparison.Ordinal); return q >= 0 && statsXaml60.Substring(q, 200).Contains("TextTrimming=\"CharacterEllipsis\""); }), "");
+        // 设置窗口：所有长说明文字必须自动换行（右侧有按钮列时不换行就会被切，备份目录那行曾被「浏览」截断）
+        string settingsXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "SettingsWindow.xaml"));
+        string[] settingsHints60 = {
+            "留空使用默认位置；更改后新备份存入新目录，已有备份仍在原位置、可正常还原",
+            "每次打开软件时增量扫描，只新增不重复",
+            "选择后立即生效并自动保存；「跟随系统」会在 Windows 深浅色切换时自动联动",
+            "超出后自动删除最旧的备份（增量链不会被破坏）",
+            "与上次备份对比，只打包有变化的文件，大幅节省空间",
+            "防止增量链过长，全量是链的起点",
+            "游戏库 games.json · 备份 backups\\ · 图标封面缓存 cache\\"
+        };
+        Check("设置窗口: 全部长说明文字自动换行（不被按钮/输入框截断）",
+            settingsHints60.All(h => { int q = settingsXaml60.IndexOf(h, StringComparison.Ordinal); return q >= 0 && settingsXaml60.Substring(q, h.Length + 220).Contains("TextWrapping=\"Wrap\""); }), "");
+        // 深色底上标题若漏写 Foreground 会回落成系统黑字（已踩过）：三个标题必须显式浅色
+        bool TitleHasPrimary(string anchor)
+        {
+            int p = xaml60.IndexOf(anchor, StringComparison.Ordinal);
+            return p >= 0 && xaml60.Substring(p, 160).Contains("{DynamicResource TextPrimary}");
+        }
+        Check("完结馆: 「完结馆/完结回顾/空状态」三个标题显式浅色（防黑字）",
+            TitleHasPrimary("Text=\"完结馆\"")
+            && TitleHasPrimary("Text=\"完结回顾\"")
+            && TitleHasPrimary("Text=\"还没有完结的游戏\""), "");
+
+        string mainCs60 = File.ReadAllText(Path.Combine(srcRoot60, "MainWindow.xaml.cs"));
+        Check("完结馆/封面: 启动时执行 custom_ 封面 → {appId}.jpg 归一化迁移",
+            mainCs60.Contains("DataMigration.NormalizeCustomCovers()"), "");
+        string editCs60 = File.ReadAllText(Path.Combine(srcRoot60, "EditGameWindow.xaml.cs"));
+        Check("封面: 编辑窗手动传图按官方命名落盘（{appId}.jpg，非 jpg 转码 JPEG）",
+            editCs60.Contains("SaveCoverCanonical")
+            && editCs60.Contains("Store.CoverFileFor(appId)")
+            && editCs60.Contains("JpegBitmapEncoder")
+            // 无 AppId 才允许退回 custom_ 兜底
+            && editCs60.Contains(": CopyToCache(dlg.FileName, Store.CoversDir, \"custom_\" + _g.Id)"), "");
+        string migCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "DataMigration.cs"));
+        Check("封面: 归一化迁移实现（改名+转码+孤儿清理+幂等保存）",
+            migCs60.Contains("public static List<string> NormalizeCustomCovers()")
+            && migCs60.Contains("Store.CoverFileFor(g.AppId)")
+            && migCs60.Contains("Directory.GetFiles(Store.CoversDir, \"custom_*\")"), "");
+        Check("完结馆: 十个事件处理器全部接线",
+            mainCs60.Contains("OnOpenCompleted") && mainCs60.Contains("OnCloseCompleted")
+            && mainCs60.Contains("OnCompletedModeChanged") && mainCs60.Contains("OnCompletedCardClick")
+            && mainCs60.Contains("OnCompletedEditDate") && mainCs60.Contains("OnCompletedUnmark")
+            && mainCs60.Contains("OnCompletedDateChanged") && mainCs60.Contains("OnCompletedTodayClick")
+            && mainCs60.Contains("OnMarkCompleted") && mainCs60.Contains("OnCompletedDoneClick"), "");
+        Check("完结馆: 按年份分组只分年不拆月，年组标题带款数",
+            mainCs60.Contains("CompletedGroupYear.IsChecked == true")
+            && mainCs60.Contains("MakeCompletedYearGroupHeader(year.Key, list.Count)"), "");
+
+        // ── 侧栏「已完结」快捷筛选 + 完结游戏列表沉底 ──
+        Check("侧栏: 筛选行含「已完结」chip（无奖杯图标，与全部/Steam/本地版同组互斥）",
+            xaml60.Contains("x:Name=\"FiltCompleted\"") && xaml60.Contains("Content=\"已完结\"")
+            && !xaml60.Contains("Content=\"🏆 已完结\"")
+            && xaml60.Contains("GroupName=\"ft\""), "");
+        Check("筛选: completed 过滤只留已通关；归档仍先剔除",
+            mainCs60.Contains("if (_filter == \"completed\" && !g.IsCompleted) return false;"), "");
+        Check("排序: 已完结游戏沉底（仅次于收藏置顶），标记/取消完结即时 ApplyFilter 重排",
+            mainCs60.Contains("if (a.IsCompleted != b.IsCompleted) return a.IsCompleted ? 1 : -1;"), "");
+        // 卡片名字旁淡金小奖杯：矢量金杯（非 emoji）、绑 IsCompleted、淡金色取 MemorialGoldLo
+        Check("列表卡片: 已完结游戏名字旁淡金矢量小奖杯（非 emoji，随主题变色）",
+            xaml60.Contains("Visibility=\"{Binding IsCompleted, Converter={StaticResource BoolToVis}}\"")
+            && xaml60.Contains("<SolidColorBrush Color=\"{DynamicResource MemorialGoldLo}\"/>")
+            && xaml60.Contains("ToolTip=\"已完结\""), "");
+        // 悬停性能：阴影模糊半径不得逐帧动画（每帧 CPU 重新高斯模糊 = 悬停掉帧主因）；
+        // 半径瞬时定终值 + 只动画 Opacity + Performance 偏置 + 鼠标节流对齐 60Hz
+        Check("悬停性能: 卡片阴影 BlurRadius 不做逐帧动画（瞬时终值+只淡 Opacity+Performance）",
+            xaml60.Contains("x:Name=\"CardShadow\"") && xaml60.Contains("RenderingBias=\"Performance\"")
+            && xaml60.Contains("Storyboard.TargetProperty=\"(DropShadowEffect.BlurRadius)\"")
+            && xaml60.Contains("To=\"8\" Duration=\"0:0:0\""), "");
+        Check("悬停性能: 鼠标节流 16ms（60Hz），阴影离开时延迟归零避免逐帧模糊",
+            mainCs60.Contains("CardMoveThrottleMs = 16")
+            && mainCs60.Contains("BeginTime = TimeSpan.FromMilliseconds(380)"), "");
+
+        // ── 删除游戏保留完结档案（归档/复活/删档案）──────────────────────
+        string entryCsArc = File.ReadAllText(Path.Combine(srcRoot60, "Models", "GameEntry.cs"));
+        Check("归档: GameEntry.Archived 属性（带通知）",
+            entryCsArc.Contains("public bool Archived")
+            && entryCsArc.Contains("OnPropertyChanged(nameof(Archived))"), "");
+        Check("归档: 已完结游戏删除时只归档不真删；未完结走原真删分支",
+            mainCs60.Contains("bool keepArchive = g.IsCompleted")
+            && mainCs60.Contains("g.Archived = true")
+            && mainCs60.Contains("if (keepArchive)")
+            // 真删 Store.Games.Remove(g) 仍保留在未完结分支
+            && mainCs60.Contains("Store.Games.Remove(g);"), "");
+        Check("归档: 列表过滤/进程监控/热键/Wiki回填/找回/统计均跳过归档条目",
+            mainCs60.Contains("if (g.Archived) return false;")
+            && mainCs60.Contains("Where(g => !g.Archived && g.ExePath.Length > 0)")
+            && mainCs60.Contains("!x.Archived && x.ExePath.Length > 0")
+            && mainCs60.Contains("if (g.Archived) continue;")
+            && mainCs60.Contains("Store.Games.Any(g => !g.Archived)")
+            && mainCs60.Contains("Store.Games.Where(g => !g.Archived).Sum"), "");
+        Check("归档: Steam 扫描与添加向导命中归档条目时就地复活",
+            mainCs60.Contains("if (existing.Archived)")
+            && mainCs60.Contains("private async Task ReviveArchivedAsync(GameEntry g, FolderGameCandidate c)")
+            && mainCs60.Contains("g.Archived = false"), "");
+        string addWinCsArc = File.ReadAllText(Path.Combine(srcRoot60, "AddGamesWindow.xaml.cs"));
+        Check("归档: 向导在库判定排除归档，允许重新勾选触发复活",
+            addWinCsArc.Contains("Store.Games.Any(g => !g.Archived"), "");
+        Check("归档: 完结馆卡片「已移出」角标 + 仅归档可见的「彻底删除档案」入口",
+            xaml60.Contains("Text=\"已移出\"")
+            && xaml60.Contains("Visibility=\"{Binding Archived, Converter={StaticResource BoolToVis}}\"")
+            && xaml60.Contains("Click=\"OnCompletedDeleteArchive\"")
+            && xaml60.Contains("Click=\"OnCompletedDetailDeleteArchive\"")
+            && xaml60.Contains("BtnCdDeleteArchive"), "");
+        Check("归档: DeleteCompletedArchive 二次确认后真删条目与自定义海报（官方共享缓存不删）",
+            mainCs60.Contains("private void DeleteCompletedArchive(GameEntry g)")
+            && mainCs60.Contains("彻底删除档案")
+            && mainCs60.Contains("if (g.HasCustomPoster && File.Exists(g.PosterFile)) File.Delete(g.PosterFile)"), "");
+        string storeCsArc = File.ReadAllText(Path.Combine(srcRoot60, "Services", "Store.cs"));
+        Check("归档: MergeGame 合并时继承已删条目的完结日期与海报",
+            storeCsArc.Contains("keep.CompletedAt == DateTime.MinValue && drop.CompletedAt != DateTime.MinValue")
+            && storeCsArc.Contains("PosterCustomFileFor(keep.Id)"), "");
+        string backupCsArc = File.ReadAllText(Path.Combine(srcRoot60, "Services", "BackupService.cs"));
+        Check("归档: 未关联备份枚举把归档条目视同已移除（残留备份可见可删）",
+            backupCsArc.Contains("Where(g => !g.Archived)"), "");
+        string cloudCsArc = File.ReadAllText(Path.Combine(srcRoot60, "Services", "CloudSyncService.cs"));
+        Check("归档: 自动云同步运营循环（对账/收集/批量上传/迁移开启）跳过归档",
+            cloudCsArc.Contains("if (g.Archived || !g.CloudAuto) continue;")
+            && cloudCsArc.Contains("if (!g.Archived) g.CloudAuto = true"), "");
+
+        // ── 图片缓存复用：删游戏再添加零网络认领老图 ─────────────────────
+        string steamApiCsArt = File.ReadAllText(Path.Combine(srcRoot60, "Services", "SteamApi.cs"));
+        Check("图片复用: 下载器对有效本地缓存零网络短路（>1KB 判定，先于 7 主机轮试）",
+            steamApiCsArt.Contains("if (File.Exists(saveTo) && new FileInfo(saveTo).Length > 1000) return true;"), "");
+        Check("图片复用: Store 提供按 AppId 认领横封/竖海报/手换保留档的统一入口",
+            storeCsArc.Contains("public static string PosterCustomAppFileFor(int appId)")
+            && storeCsArc.Contains("public static bool IsUsableImage(string? file)")
+            && storeCsArc.Contains("public static bool AdoptCachedArtwork(GameEntry g)")
+            && storeCsArc.Contains("PosterCustomAppFileFor(g.AppId)")
+            // 优先级：手换保留档 ＞ 官方竖图 ＞ 横封
+            && storeCsArc.IndexOf("PosterCustomAppFileFor", StringComparison.Ordinal)
+               < storeCsArc.IndexOf("PosterFileFor(g.AppId)", StringComparison.Ordinal), "");
+        Check("图片复用: 四个入库/补图入口全部先认领再联网",
+            mainCs60.Contains("await Dispatcher.InvokeAsync(() => Store.AdoptCachedArtwork(g))")
+            && mainCs60.Contains("if (Store.AdoptCachedArtwork(g)) { Store.Save(); BuildCompletedHostIfOpen(); return; }")
+            && mainCs60.Contains("Store.AdoptCachedArtwork(g)"), "");
+        Check("图片复用: 真删游戏时手换海报改名 custom_app_{appId}.jpg 留档；换海报清旧档防孤儿",
+            mainCs60.Contains("File.Move(g.PosterFile, keepPoster)")
+            && mainCs60.Contains("PosterCustomAppFileFor(g.AppId)"), "");
+        Check("完结馆: 月份分组构建/Esc 两级返回/馆内数量副标题/后台补海报/更新数据库补海报",
+            mainCs60.Contains("BuildCompletedHost")
+            && mainCs60.Contains("MakeCompletedMonthHeader")
+            && mainCs60.Contains("g.CompletedAt.Year")
+            && mainCs60.Contains("Key.Escape")
+            && mainCs60.Contains("CloseCompletedDetail")
+            && !mainCs60.Contains("UpdateCompletedCount")
+            && mainCs60.Contains("SteamApi.DownloadPoster(g.AppId, path)")
+            && mainCs60.Contains("g.IsCompleted && !g.HasPoster"), "");
+        Check("海报: 启动补海报不限 Steam（手动入库 Local 游戏同样补，自定义海报不覆盖）",
+            mainCs60.Contains("BackfillCompletedPostersAsync")
+            && mainCs60.Contains("g.AppId > 0 && g.IsCompleted && !g.HasPoster && !g.HasCustomPoster")
+            && mainCs60.Contains("BackfillCompletedPostersAsync(delayed: true)"), "");
+        Check("完结馆: 点卡片进馆内回顾详情（不跳主列表）+ 五个详情操作 + 统计填充",
+            mainCs60.Contains("OpenCompletedDetail(g)")
+            && mainCs60.Contains("private void OpenCompletedDetail(GameEntry g)")
+            && mainCs60.Contains("FillCompletedDetailStats")
+            && mainCs60.Contains("PlayTracker.SecondsSince(g, DateTime.Now.AddDays(-7))")
+            && mainCs60.Contains("OnCompletedDetailBack")
+            && mainCs60.Contains("OnCompletedDetailRun")
+            && mainCs60.Contains("OnCompletedDetailEditDate")
+            && mainCs60.Contains("OnCompletedDetailUnmark")
+            && mainCs60.Contains("OnCompletedDetailLocate")
+            && mainCs60.Contains("LaunchGame(g)"), "");
+        Check("完结馆: 悬停特效 ZIndex 同时兼容 ListBoxItem 与海报墙 ContentControl",
+            mainCs60.Contains("FindAncestor<ContentControl>(root)")
+            && mainCs60.Contains("private static FrameworkElement? CardZHost(FrameworkElement root)"), "");
+        Check("完结馆: 海报卡真3D透视倾斜驱动（rotateX/rotateY/Z抬升/双轴暗角）",
+            mainCs60.Contains("OnPosterTiltMove")
+            && mainCs60.Contains("OnPosterTiltEnter")
+            && mainCs60.Contains("OnPosterTiltLeave")
+            && mainCs60.Contains("AxisAngleRotation3D")
+            && mainCs60.Contains("PosterTiltMaxAngle")
+            && mainCs60.Contains("TranslateTransform3D.OffsetZProperty")
+            // 上下倾斜方向：鼠标靠上(ny小)→ ay 负 → 上边缘后仰（用户验收过的手感，防再被写反）
+            && mainCs60.Contains("double ay = (ny - 0.5) * 2.0;"), "");
+
+        // ── 海报自定义/兜底链 + 工具栏精简 ──
+        Check("完结馆: 海报兜底链与自定义判定派生属性",
+            entryCs60.Contains("public string PosterDisplayFile")
+            && entryCs60.Contains("public bool HasPosterDisplay")
+            && entryCs60.Contains("public bool HasCustomPoster"), "");
+        Check("完结馆: 卡片/详情海报绑定走兜底链（不再直绑 PosterFile）+ 换海报入口",
+            xaml60.Contains("{Binding PosterDisplayFile}")
+            && !xaml60.Contains("{Binding PosterFile}")
+            && xaml60.Contains("OnCompletedChangePoster")
+            && xaml60.Contains("OnCompletedResetPoster")
+            && xaml60.Contains("OnCompletedDetailChangePoster"), "");
+        Check("完结馆: 换海报/恢复官方实现；自动补海报不得覆盖自定义",
+            mainCs60.Contains("PickAndSaveCustomPoster")
+            && mainCs60.Contains("ResetCustomPoster")
+            && mainCs60.Contains("Store.PosterCustomFileFor(g.Id)")
+            && mainCs60.Contains("g.AppId <= 0 || g.HasCustomPoster"), "");
+
+        // 工具栏：扫描文件夹 + 手动添加 合并为一个向导；低频项收进「⋯ 更多」
+        string addWinXaml60 = Path.Combine(srcRoot60, "AddGamesWindow.xaml");
+        string addWinCs60 = Path.Combine(srcRoot60, "AddGamesWindow.xaml.cs");
+        Check("工具栏: 添加游戏统一向导窗口（文件夹扫描 + 手动 exe + 勾选清单）",
+            File.Exists(addWinXaml60) && File.Exists(addWinCs60)
+            && File.ReadAllText(addWinCs60).Contains("FolderScanner.Scan(")
+            && File.ReadAllText(addWinCs60).Contains("FolderScanner.CandidateFromExe")
+            && File.ReadAllText(addWinCs60).Contains("public List<FolderGameCandidate> SelectedPicks")
+            && File.ReadAllText(addWinXaml60).Contains("CandidateList"), "");
+        Check("工具栏: 只剩单一添加入口 OnAddGameWizard，旧按钮与旧处理器已删除",
+            xaml60.Contains("Click=\"OnAddGameWizard\"")
+            && mainCs60.Contains("private async void OnAddGameWizard")
+            && mainCs60.Contains("AddLocalGameEntryAsync")
+            && !xaml60.Contains("OnScanFolder")
+            && !mainCs60.Contains("private async void OnScanFolder")
+            && !mainCs60.Contains("private async void OnAddGame(")
+            && !xaml60.Contains("扫描文件夹")
+            && !xaml60.Contains("📂 备份管理")
+            && !xaml60.Contains("🌐 更新数据库"), "");
+        Check("工具栏: 「⋯更多」收纳未关联备份/更新存档规则；界面不出现「孤儿」外号",
+            xaml60.Contains("OnMoreMenuClick")
+            && mainCs60.Contains("private void OnMoreMenuClick")
+            && mainCs60.Contains("🗂 未关联备份")
+            && !xaml60.Contains("孤儿")
+            && File.ReadAllText(Path.Combine(srcRoot60, "OrphanBackupsWindow.xaml"))
+                .Contains("Title=\"未关联备份 · GameSaveVault\""), "");
+    }
+
     Store.HomeDirOverride = null;
 }
 
@@ -6299,6 +6843,89 @@ var strayAfter = RealVaultStrayFiles().ToHashSet();
 var strayLeaked = strayAfter.Except(realStrayBefore).ToList();
 Check("沙箱守卫: 真实库根未新增 settings.guard/settings.corrupt 残留",
     strayLeaked.Count == 0, string.Join(",", strayLeaked));
+
+// ===== 性能修复守卫：启动/后台重活不得回到 UI 线程（点筛选按钮鼠标迟缓回归防护）=====
+string perfRoot61 = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+string perfMain61 = File.ReadAllText(Path.Combine(perfRoot61, "src", "GameSaveManager", "MainWindow.xaml.cs"));
+string perfWiki61 = File.ReadAllText(Path.Combine(perfRoot61, "src", "GameSaveManager", "Services", "WikiService.cs"));
+string perfXaml61 = File.ReadAllText(Path.Combine(perfRoot61, "src", "GameSaveManager", "MainWindow.xaml"));
+
+// WikiService 正则必须全部预编译（静态缓存槽位不足会在 90 款回填时反复重编译冻 UI）
+Check("性能守卫: WikiService 正则已预编译（Rx* 字段 + RegexOptions.Compiled）",
+    perfWiki61.Contains("RxHtmlComment") && perfWiki61.Contains("RegexOptions.Compiled"), "");
+int bareRegex61 = perfWiki61.Split('\n')
+    .Count(l => l.Contains("new Regex(") && !l.Contains("RegexOptions.Compiled"));
+Check("性能守卫: WikiService 无未编译的裸 new Regex", bareRegex61 == 0, $"bare={bareRegex61}");
+Check("性能守卫: WikiService 不使用静态 Regex 方法（模式串无法预编译）",
+    !perfWiki61.Contains("Regex.Replace(") && !perfWiki61.Contains("Regex.Match(")
+    && !perfWiki61.Contains("Regex.IsMatch(") && !perfWiki61.Contains("Regex.Split("), "");
+
+// 每秒进程枚举必须在后台线程，且有重入保护（Process.GetProcesses 系统繁忙时可冻 UI 1 秒+）
+int watchPos61 = perfMain61.IndexOf("private async void WatchTick", StringComparison.Ordinal);
+string watchBody61 = watchPos61 >= 0 ? perfMain61.Substring(watchPos61, 3000) : "";
+Check("性能守卫: WatchTick 进程枚举放 Task.Run 后台执行",
+    watchBody61.Contains("await Task.Run") && watchBody61.Contains("Process.GetProcesses()"), "");
+Check("性能守卫: WatchTick 有 _watchTickBusy 重入保护",
+    watchBody61.Contains("_watchTickBusy") && watchBody61.Contains("Interlocked.Exchange"), "");
+
+// 联网解析链必须脱离 UI 同步上下文
+int enrichPos61 = perfMain61.IndexOf("EnrichWikiAsync(GameEntry g", StringComparison.Ordinal);
+string enrichBody61 = enrichPos61 >= 0 ? perfMain61.Substring(enrichPos61, 2500) : "";
+Check("性能守卫: EnrichWikiAsync 联网解析在线程池（Task.Run + ConfigureAwait）",
+    enrichBody61.Contains("Task.Run(() => WikiService.EnrichAsync")
+    && enrichBody61.Contains("ConfigureAwait(false)"), "");
+int matchPos61 = perfMain61.IndexOf("private async Task MatchLocalGameAsync", StringComparison.Ordinal);
+string matchBody61 = matchPos61 >= 0 ? perfMain61.Substring(matchPos61, 1500) : "";
+Check("性能守卫: MatchLocalGameAsync 开头强制脱离 UI 同步上下文",
+    matchBody61.Contains("await Task.Run(() => { }).ConfigureAwait(false)"), "");
+
+// Popup/ToolTip 冷启动预热必须保留（透明分层 HWND 首开同步卡 UI 1 秒+）
+Check("性能守卫: 启动预热主题 Popup 与 ToolTip",
+    perfMain61.Contains("ThemePopup.IsOpen = true;") && perfMain61.Contains("warmTip.IsOpen = true;"), "");
+
+// ToolTip 全局样式必须轻量：无 Effect（软件光栅阴影在空转帧里持续吃 CPU）
+int tipStylePos61 = perfXaml61.IndexOf("<Style TargetType=\"ToolTip\">", StringComparison.Ordinal);
+int tipStyleEnd61 = tipStylePos61 >= 0 ? perfXaml61.IndexOf("</Style>", tipStylePos61, StringComparison.Ordinal) : -1;
+string tipStyle61 = tipStyleEnd61 > tipStylePos61
+    ? perfXaml61.Substring(tipStylePos61, tipStyleEnd61 - tipStylePos61) : "";
+Check("性能守卫: XAML 含全局轻量 ToolTip 样式且样式内无 Effect",
+    tipStyle61.Length > 0 && !tipStyle61.Contains("Effect"), "");
+
+// 临时帧诊断插桩必须清理干净：订阅 CompositionTarget.Rendering 会强制渲染循环永不休眠
+Check("性能守卫: DIAG 帧探针已全部清理（Rendering 订阅会自污染渲染循环）",
+    !perfMain61.Contains("CompositionTarget.Rendering") && !perfMain61.Contains("DIAG")
+    && !perfMain61.Contains("gsm_framelog") && !perfMain61.Contains("gsm_animclock"), "");
+
+// 游戏列表必须开虚拟化+容器回收：卡片模板重（DropShadow/高质量图标/Storyboard），
+// 89 款全量实例化会让切筛选 chip 冻几秒；固定行高 62 与虚拟化完全兼容
+int glPos61 = perfXaml61.IndexOf("<ListBox x:Name=\"GamesList\"", StringComparison.Ordinal);
+string glHead61 = glPos61 >= 0 ? perfXaml61.Substring(glPos61, 400) : "";
+Check("性能守卫: 游戏列表开启虚拟化与容器回收（切筛选不卡）",
+    glHead61.Contains("VirtualizingStackPanel.IsVirtualizing=\"True\"")
+    && glHead61.Contains("VirtualizingStackPanel.VirtualizationMode=\"Recycling\"")
+    && !glHead61.Contains("IsVirtualizing=\"False\""), "");
+
+// 主题弹窗 4 个小 chip 保留外圈描边（含选中态蓝边）；要去描边的是其锚点🌙大按钮
+int chipSmPos61 = perfXaml61.IndexOf("<Style x:Key=\"ChipSm\"", StringComparison.Ordinal);
+int chipSmEnd61 = chipSmPos61 >= 0 ? perfXaml61.IndexOf("</Style>", chipSmPos61, StringComparison.Ordinal) : -1;
+string chipSm61 = chipSmEnd61 > chipSmPos61 ? perfXaml61.Substring(chipSmPos61, chipSmEnd61 - chipSmPos61) : "";
+Check("视觉守卫: 主题弹窗 ChipSm 保留描边与选中蓝边",
+    chipSm61.Contains("BorderBrush=\"{DynamicResource BorderBrush}\"")
+    && chipSm61.Contains("Property=\"BorderBrush\" Value=\"{DynamicResource Accent}\""), "");
+// 🌙大按钮本身无描边：默认透明，悬停也不出现蓝边（只出悬停底色）
+int themeBtnPos61 = perfXaml61.IndexOf("<Button x:Name=\"ThemeBtn\"", StringComparison.Ordinal);
+int themeBtnTplEnd61 = themeBtnPos61 >= 0 ? perfXaml61.IndexOf("</Button.Template>", themeBtnPos61, StringComparison.Ordinal) : -1;
+string themeBtnTpl61 = themeBtnTplEnd61 > themeBtnPos61
+    ? perfXaml61.Substring(themeBtnPos61, themeBtnTplEnd61 - themeBtnPos61) : "";
+Check("视觉守卫: 🌙主题大按钮无描边（默认与悬停均无边框）",
+    themeBtnTpl61.Contains("BorderBrush=\"Transparent\"")
+    && !themeBtnTpl61.Contains("Value=\"{DynamicResource Accent}\""), "");
+// 主题弹窗外圈大边框去掉（包住 4 个 chip 的那圈），chip 自身描边保留
+int popupBodyPos61 = perfXaml61.IndexOf("<Border x:Name=\"ThemePopupBody\"", StringComparison.Ordinal);
+string popupBodyHead61 = popupBodyPos61 >= 0 ? perfXaml61.Substring(popupBodyPos61, 220) : "";
+Check("视觉守卫: 主题弹窗外圈无描边（仅面板底色）",
+    popupBodyHead61.Contains("BorderThickness=\"0\"")
+    && !popupBodyHead61.Contains("BorderBrush="), "");
 
 Console.WriteLine($"\n结果: {pass} 通过, {fail} 失败");
 try { Directory.Delete(temp, true); } catch { }
