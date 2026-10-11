@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
 
     <!-- ===== Color（供 DropShadowEffect / GradientStop 使用） ===== -->
     <Color x:Key="ShadowColor">#3A4250</Color>
@@ -84,5 +85,112 @@
     <SolidColorBrush x:Key="SteamText" Color="#2D6BB8"/>
     <SolidColorBrush x:Key="BuiltInTagBg" Color="#DCE9FB"/>
     <SolidColorBrush x:Key="BuiltInTagText" Color="#2F6CB8"/>
+
+    <!-- ===== 沉浸式键（浅色主题映射回常态：详情/完结馆保持原浅色外观，零视觉变化） ===== -->
+    <Color x:Key="UuBgTop">#F4F6F8</Color>
+    <Color x:Key="UuBgMid">#F4F6F8</Color>
+    <Color x:Key="UuBgBottom">#F4F6F8</Color>
+    <!-- 艺术底（模糊封面）浅色下整体隐藏，保证与改造前像素一致 -->
+    <sys:Double x:Key="UuArtOpacity">0</sys:Double>
+    <Color x:Key="UuArtVeilC">#00FFFFFF</Color>
+    <Color x:Key="UuGlowTealC">#004C86E6</Color>
+    <Color x:Key="UuGlowIndigoC">#004C86E6</Color>
+    <LinearGradientBrush x:Key="UuBackdropBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource UuBgTop}" Offset="0"/>
+        <GradientStop Color="{StaticResource UuBgBottom}" Offset="1"/>
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="UuGlowTealBrush">
+        <GradientStop Color="#004C86E6" Offset="0"/>
+        <GradientStop Color="#004C86E6" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="UuGlowIndigoBrush">
+        <GradientStop Color="#004C86E6" Offset="0"/>
+        <GradientStop Color="#004C86E6" Offset="1"/>
+    </RadialGradientBrush>
+    <Color x:Key="UuPanelC">#FFFFFF</Color>
+    <Color x:Key="UuPanel2C">#EEF1F5</Color>
+    <Color x:Key="UuInnerBgC">#F4F6F8</Color>
+    <Color x:Key="UuBorderC">#DDE2E9</Color>
+    <Color x:Key="UuTextC">#2C313B</Color>
+    <Color x:Key="UuText2C">#616B7B</Color>
+    <SolidColorBrush x:Key="UuPanel" Color="{StaticResource UuPanelC}"/>
+    <SolidColorBrush x:Key="UuPanel2" Color="{StaticResource UuPanel2C}"/>
+    <SolidColorBrush x:Key="UuInnerBg" Color="{StaticResource UuInnerBgC}"/>
+    <SolidColorBrush x:Key="UuBorder" Color="{StaticResource UuBorderC}"/>
+    <SolidColorBrush x:Key="UuText" Color="{StaticResource UuTextC}"/>
+    <SolidColorBrush x:Key="UuText2" Color="{StaticResource UuText2C}"/>
+    <Color x:Key="UuTealC">#4C86E6</Color>
+    <Color x:Key="UuTealHiC">#6296EC</Color>
+    <Color x:Key="UuTealDeepC">#4C86E6</Color>
+    <Color x:Key="UuOnTealC">#FFFFFF</Color>
+    <Color x:Key="UuTealSoftC">#E4EEFB</Color>
+    <Color x:Key="UuTealSoftBorderC">#A6C3F0</Color>
+    <Color x:Key="UuAccent2C">#1B7B8F</Color>
+    <Color x:Key="UuAccent2SoftC">#D8EEF1</Color>
+    <SolidColorBrush x:Key="UuArtVeil" Color="{StaticResource UuArtVeilC}"/>
+    <!-- 主体通铺层在浅色整体隐藏（UuArtOpacity=0），遮罩键仅为占位、保持全透 -->
+    <SolidColorBrush x:Key="UuArtVeilFlat" Color="{StaticResource UuArtVeilC}"/>
+    <LinearGradientBrush x:Key="UuArtVeilTop" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#00FFFFFF" Offset="0"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- 侧栏/空态底色：浅色不透明白，与改造前 Panel 像素一致 -->
+    <SolidColorBrush x:Key="SideBarBg" Color="#FFFFFFFF"/>
+    <!-- 未选游戏空态：浅色不透明浅灰，与改造前 Bg(#F4F6F8) 像素一致 -->
+    <SolidColorBrush x:Key="EmptyStateBg" Color="#FFF4F6F8"/>
+    <Color x:Key="UuTealGlowColor">#004C86E6</Color>
+    <SolidColorBrush x:Key="UuTeal" Color="{StaticResource UuTealC}"/>
+    <SolidColorBrush x:Key="UuTealHi" Color="{StaticResource UuTealHiC}"/>
+    <SolidColorBrush x:Key="UuTealDeep" Color="{StaticResource UuTealDeepC}"/>
+    <SolidColorBrush x:Key="UuOnTeal" Color="{StaticResource UuOnTealC}"/>
+    <SolidColorBrush x:Key="UuTealSoft" Color="{StaticResource UuTealSoftC}"/>
+    <SolidColorBrush x:Key="UuTealSoftBorder" Color="{StaticResource UuTealSoftBorderC}"/>
+    <!-- 浅色：纯色=原 AccentPrimary，运行按钮与改造前 BtnPrimary 像素一致 -->
+    <LinearGradientBrush x:Key="UuRunBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#4C86E6" Offset="0"/>
+        <GradientStop Color="#4C86E6" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- 横幅按钮压在深色封面上，浅色主题同样用半透明白玻璃（=原 BtnSmOnHero） -->
+    <Color x:Key="UuGhostBgC">#22FFFFFF</Color>
+    <Color x:Key="UuGhostBorderC">#5CFFFFFF</Color>
+    <Color x:Key="UuGhostHoverBgC">#42FFFFFF</Color>
+    <Color x:Key="UuGhostHoverBorderC">#D9FFFFFF</Color>
+    <Color x:Key="UuGhostTextC">#EDF1F8</Color>
+    <SolidColorBrush x:Key="UuGhostBg" Color="{StaticResource UuGhostBgC}"/>
+    <SolidColorBrush x:Key="UuGhostBorder" Color="{StaticResource UuGhostBorderC}"/>
+    <SolidColorBrush x:Key="UuGhostHoverBg" Color="{StaticResource UuGhostHoverBgC}"/>
+    <SolidColorBrush x:Key="UuGhostHoverBorder" Color="{StaticResource UuGhostHoverBorderC}"/>
+    <SolidColorBrush x:Key="UuGhostText" Color="{StaticResource UuGhostTextC}"/>
+    <Color x:Key="UuBtnHoverC">#E8F0FB</Color>
+    <Color x:Key="UuRowHoverC">#EBF1FA</Color>
+    <Color x:Key="UuScrollThumbC">#C9D0DA</Color>
+    <Color x:Key="UuIconRingC">#1F000000</Color>
+    <Color x:Key="UuDividerC">#0A000000</Color>
+    <SolidColorBrush x:Key="UuBtnHover" Color="{StaticResource UuBtnHoverC}"/>
+    <SolidColorBrush x:Key="UuRowHover" Color="{StaticResource UuRowHoverC}"/>
+    <SolidColorBrush x:Key="UuScrollThumb" Color="{StaticResource UuScrollThumbC}"/>
+    <SolidColorBrush x:Key="UuIconRing" Color="{StaticResource UuIconRingC}"/>
+    <SolidColorBrush x:Key="UuDivider" Color="{StaticResource UuDividerC}"/>
+    <!-- 沉浸区其余语义映射：浅色下列全部=原常态值，保证零视觉变化 -->
+    <Color x:Key="UuRowHoverOverlayC">#0C000000</Color>
+    <Color x:Key="UuItemSelC">#E3EDFB</Color>
+    <Color x:Key="UuCardSelC">#E8EFFA</Color>
+    <Color x:Key="UuRowSelC">#DDE9FB</Color>
+    <Color x:Key="UuRowSelHoverC">#CFE0F9</Color>
+    <Color x:Key="UuOnPrimaryOverlayC">#38FFFFFF</Color>
+    <Color x:Key="UuOnPrimaryMutedC">#FFFFFF</Color>
+    <Color x:Key="UuKindFullBgC">#E6E9EE</Color>
+
+    <!-- ===== 完结回顾·纪念卡（冷白底 + 暖古铜金；冷底衬暖金，浅底深字） ===== -->
+    <Color x:Key="MemorialBgTop">#FBFAF5</Color>
+    <Color x:Key="MemorialBgBottom">#F3F0E6</Color>
+    <Color x:Key="MemorialGoldHi">#A8812B</Color>
+    <Color x:Key="MemorialGoldLo">#82621C</Color>
+    <SolidColorBrush x:Key="MemorialBorder" Color="#D7CEA8"/>
+    <SolidColorBrush x:Key="MemorialTitle" Color="#927E3E"/>
+    <SolidColorBrush x:Key="MemorialMuted" Color="#7B7763"/>
+    <SolidColorBrush x:Key="MemorialValue" Color="#49493F"/>
+    <SolidColorBrush x:Key="MemorialSince" Color="#906D1B"/>
+    <SolidColorBrush x:Key="MemorialDivider" Color="#E5E0CA"/>
 
 </ResourceDictionary>

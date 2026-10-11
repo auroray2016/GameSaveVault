@@ -1,0 +1,93 @@
+<Window x:Class="GameSaveManager.AddGamesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="添加游戏 · GameSaveVault"
+        Icon="Assets/app.ico"
+        Width="680" Height="560" MinHeight="420" MinWidth="540"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        ShowInTaskbar="False"
+        Background="{DynamicResource Panel}"
+        FontFamily="Microsoft YaHei UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+    <Grid Margin="20,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 来源选择：文件夹批量为主，手动 exe 兜底 -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Button x:Name="BtnPickFolder" Style="{StaticResource BtnPrimary}"
+                    Content="📁 选择游戏文件夹" Click="OnPickFolder"/>
+            <Button x:Name="BtnPickExe" Style="{StaticResource Btn}" Content="🧩 手动指定 exe…"
+                    Margin="10,0,0,0" Click="OnPickExe"/>
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" x:Name="StatusText" Margin="2,12,0,8" FontSize="12"
+                   Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"
+                   Text="选择游戏安装目录（可自动扫出里面的游戏）；扫不到的单个 exe 用「手动指定」。"/>
+
+        <Border Grid.Row="2" Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1" CornerRadius="10">
+            <Grid>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="6">
+                    <ItemsControl x:Name="CandidateList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="2,2" Padding="6,7" CornerRadius="8"
+                                        Background="{DynamicResource Panel2}">
+                                    <CheckBox IsChecked="{Binding Selected}" IsEnabled="{Binding CanSelect}"
+                                              VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}">
+                                        <StackPanel Margin="6,0,0,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="13" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"
+                                                           TextTrimming="CharacterEllipsis" MaxWidth="540"/>
+                                                <TextBlock Text="已在库" FontSize="10.5" Margin="8,0,0,0"
+                                                           Foreground="{DynamicResource TextSecondary}"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{Binding InLibraryVis}"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Exe}" FontSize="11" Margin="0,3,0,0"
+                                                       Foreground="{DynamicResource TextSecondary}"
+                                                       TextTrimming="CharacterEllipsis" MaxWidth="540"
+                                                       FontFamily="Consolas"/>
+                                        </StackPanel>
+                                    </CheckBox>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <!-- 空状态 -->
+                <StackPanel x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="🎮" FontSize="40" HorizontalAlignment="Center" Opacity="0.5"/>
+                    <TextBlock Text="还没有候选游戏" FontSize="14"
+                               Foreground="{DynamicResource TextSecondary}" Margin="0,10,0,0"/>
+                    <TextBlock Text="点上方「选择游戏文件夹」开始扫描" FontSize="11.5"
+                               Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="HintText" VerticalAlignment="Center"
+                       Text="自动忽略卸载器、运行库和学习组启动器；存档位置入库后自动识别。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"
+                       Margin="0,0,16,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource Btn}" Content="取消" Width="80" IsCancel="True"/>
+                <Button x:Name="BtnConfirm" Style="{StaticResource BtnPrimary}" Width="110" Margin="10,0,0,0"
+                        Content="添加所选" IsDefault="True" Click="OnConfirm"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

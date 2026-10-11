@@ -1,0 +1,40 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================
+         沉浸式 UU 风·语义键局部覆盖
+         合并进【游戏详情/完结馆/完结回顾】三个根节点的 Resources：
+         子树内所有 DynamicResource 语义键自动指向 Uu* 键。
+         颜色用 DynamicResource 绑 Uu*C，切换主题时实时联动；
+         浅色主题里 Uu*C 全部=常态值，故浅色下零视觉变化。
+
+         重要：品牌色（Accent* 实底/选中态）不在此覆盖——UU 截图里
+         大面积实底仍是蓝色，青绿只作极少量点睛（仅「▶运行游戏」
+         按钮显式使用 BtnUuTeal）。筹码/Chip/统计格等保持全局宝蓝。
+         ============================================================ -->
+
+    <!-- 表面层（蓝黑玻璃） -->
+    <SolidColorBrush x:Key="Bg" Color="{DynamicResource UuInnerBgC}"/>
+    <SolidColorBrush x:Key="Panel" Color="{DynamicResource UuPanelC}"/>
+    <SolidColorBrush x:Key="Panel2" Color="{DynamicResource UuPanel2C}"/>
+    <SolidColorBrush x:Key="BorderBrush" Color="{DynamicResource UuBorderC}"/>
+    <SolidColorBrush x:Key="RowDivider" Color="{DynamicResource UuDividerC}"/>
+
+    <!-- 文字 -->
+    <SolidColorBrush x:Key="TextPrimary" Color="{DynamicResource UuTextC}"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="{DynamicResource UuText2C}"/>
+
+    <!-- 行内悬停/滚动条/图标环：跟随玻璃面，品牌色一律不覆盖（沿用全局宝蓝） -->
+    <SolidColorBrush x:Key="BtnHoverBg" Color="{DynamicResource UuBtnHoverC}"/>
+    <SolidColorBrush x:Key="RowHoverBg" Color="{DynamicResource UuRowHoverC}"/>
+    <SolidColorBrush x:Key="RowHoverOverlay" Color="{DynamicResource UuRowHoverOverlayC}"/>
+    <SolidColorBrush x:Key="ScrollThumb" Color="{DynamicResource UuScrollThumbC}"/>
+    <SolidColorBrush x:Key="IconRing" Color="{DynamicResource UuIconRingC}"/>
+    <!-- 列表卡片选中面：玻璃壁纸上的极淡青光（仅卡片面；整行 ItemSelectedBg 不覆盖，
+         品牌宝蓝/Chip 仍走全局色） -->
+    <SolidColorBrush x:Key="CardSelectedBg" Color="{DynamicResource UuCardSelC}"/>
+
+    <!-- 图标占位渐变 IconPlaceholderStart/End 是 Color 键（非依赖属性，无法局部覆盖）；
+         深色靛蓝卡面上原靛蓝→紫渐变本就协调，保持全局不动；浅色同样不变。 -->
+
+</ResourceDictionary>

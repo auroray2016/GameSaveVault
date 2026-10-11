@@ -208,19 +208,22 @@
             <TextBlock Text="{Binding Game}" ToolTip="{Binding Game}" TextTrimming="CharacterEllipsis"/>
         </DataTemplate>
         <DataTemplate x:Key="CProfile">
-            <TextBlock Text="{Binding ProfileText}" Foreground="{DynamicResource TextSecondary}"/>
+            <TextBlock Text="{Binding ProfileText}" Foreground="{DynamicResource TextSecondary}"
+                       TextTrimming="CharacterEllipsis" ToolTip="{Binding ProfileText}"/>
         </DataTemplate>
         <DataTemplate x:Key="CNote">
             <!-- 备注：上传前本地有备注则显示本地备注（无则留空）；文件名移到整行鼠标浮窗 -->
-            <TextBlock Text="{Binding NoteText}" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding NoteText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding NoteText}"/>
         </DataTemplate>
         <DataTemplate x:Key="CSize">
-            <TextBlock Text="{Binding SizeText}" Foreground="{DynamicResource TextSecondary}"/>
+            <TextBlock Text="{Binding SizeText}" Foreground="{DynamicResource TextSecondary}"
+                       TextTrimming="CharacterEllipsis"/>
         </DataTemplate>
         <DataTemplate x:Key="CTime">
             <!-- 主行存档时间（游戏真实保存时刻），副行小字上传时刻；无索引条目的旧包只有上传时间 -->
             <StackPanel>
-                <TextBlock Text="{Binding MainTimeText}" Foreground="{DynamicResource TextSecondary}"/>
+                <TextBlock Text="{Binding MainTimeText}" Foreground="{DynamicResource TextSecondary}"
+                           TextTrimming="CharacterEllipsis"/>
                 <TextBlock Text="{Binding UploadTimeText}" FontSize="10"
                            Foreground="{DynamicResource TextSecondary}"
                            Visibility="{Binding UploadTimeText, Converter={StaticResource BlankToCollapsed}}"/>
@@ -261,10 +264,10 @@
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="游戏" Width="150" CellTemplate="{StaticResource CGame}"/>
-                        <GridViewColumn Header="玩家" Width="70" CellTemplate="{StaticResource CProfile}"/>
+                        <GridViewColumn Header="玩家" Width="96" CellTemplate="{StaticResource CProfile}"/>
                         <GridViewColumn Header="存档时间" Width="130" CellTemplate="{StaticResource CTime}"/>
                         <GridViewColumn Header="备注" Width="220" CellTemplate="{StaticResource CNote}"/>
-                        <GridViewColumn Header="大小" Width="70" CellTemplate="{StaticResource CSize}"/>
+                        <GridViewColumn Header="大小" Width="82" CellTemplate="{StaticResource CSize}"/>
                     </GridView>
                 </ListView.View>
             </ListView>

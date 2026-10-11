@@ -157,6 +157,22 @@
             </Style.Triggers>
         </Style>
 
+        <!-- 横幅徽章：封面黑遮罩是恒定暗底，浅色主题的 Orange/SteamText（为白底设计）压上去发糊。
+             统一用半透明白玻璃底 + 白字，类型信息由文字本身表达，三套主题通用。 -->
+        <Style x:Key="HeroBadge" TargetType="Border">
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="7,1.5"/>
+            <Setter Property="Background" Value="#22FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#66FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style x:Key="HeroBadgeText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="#F5F7FA"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
         <!-- 列表项：单张金属游戏卡片。平整带柔和投影；悬停放大上浮+投影加深；
              rotateY 倾斜感（2D 横向压缩 + 方向暗角近似）/扫光圆心跟随鼠标（代码后置实时更新），
              离开全部平滑复位。纯 2D 合成层实现，无 Viewport3D/逐卡纹理等重开销。
@@ -364,7 +380,12 @@
 
         <!-- 详情页 -->
         <DataTemplate x:Key="GameDetail" DataType="models:GameEntry">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <!-- 沉浸语义覆盖字典不静态合并：由 Loaded 按当前主题动态挂载（仅深色），
+                 浅色下不挂载、子树直接回落全局浅色键，彻底杜绝跨主题串色 -->
+            <!-- 背景壁纸已上移到主体区通铺，ScrollViewer 自身保持透明：
+                 深色透出通铺壁纸，浅色透出窗口 Bg（=原 UuBackdropBrush 奶油色） -->
+            <ScrollViewer x:Name="DetailImmersiveRoot" Loaded="OnImmersiveRootLoaded"
+                          VerticalScrollBarVisibility="Auto" Background="Transparent">
                 <StackPanel Margin="0">
                     <!-- 横幅 -->
                     <Grid Height="172" ClipToBounds="True">
@@ -430,50 +451,54 @@
                                                           Opacity="0.7"/>
                                     </TextBlock.Effect>
                                 </TextBlock>
-                                <!-- 窄窗口/侧栏拖宽时自动换行，末尾按钮不再被挤出横幅；子项统一垂直居中 -->
+                                <!-- 窄窗口/侧栏拖宽时自动换行，末尾按钮不再被挤出横幅；
+                                     所有徽章/按钮统一右距 6（末项除外），视觉等距，不再有 8/10 的参差 -->
                                 <WrapPanel Margin="0,8,0,0" Orientation="Horizontal">
-                                    <Border Style="{StaticResource Badge}" VerticalAlignment="Center" Margin="0,0,0,6">
-                                        <TextBlock Style="{StaticResource BadgeText}" Text="{Binding TypeBadge}"/>
+                                    <Border Style="{StaticResource HeroBadge}" VerticalAlignment="Center" Margin="0,0,6,6">
+                                        <TextBlock Style="{StaticResource HeroBadgeText}" Text="{Binding TypeBadge}"/>
                                     </Border>
-                                    <Border Style="{StaticResource Badge}" Margin="8,0,0,6" VerticalAlignment="Center">
-                                        <TextBlock Style="{StaticResource BadgeText}" Text="{Binding BackupCountText}"
-                                                   Foreground="#D6DBE5"/>
+                                    <Border Style="{StaticResource HeroBadge}" VerticalAlignment="Center" Margin="0,0,6,6">
+                                        <TextBlock Style="{StaticResource HeroBadgeText}" Text="{Binding BackupCountText}"/>
                                     </Border>
-                                    <Button Style="{StaticResource BtnPrimary}" FontSize="12.5" Padding="14,4"
-                                            Content="▶ 运行游戏" x:Name="BtnRun" Margin="10,0,6,6" VerticalAlignment="Center"
+                                    <Button Style="{StaticResource BtnUuTeal}" FontSize="12.5" Padding="14,4"
+                                            Content="▶ 运行游戏" x:Name="BtnRun" Margin="0,0,6,6" VerticalAlignment="Center"
                                             Click="OnRunGame"
                                             ToolTip="启动游戏：Steam 游戏通过 Steam 启动，学习版直接运行 exe（双击列表项同样可运行）"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="✎ 编辑" VerticalAlignment="Center" Margin="0,0,6,6"
+                                    <Button Style="{StaticResource BtnSmOnHero}" Content="✎ 编辑" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnEditGame"
                                             ToolTip="编辑中英文名称、封面、图标、AppId 和游戏 exe"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="📊 游玩详情" VerticalAlignment="Center" Margin="0,0,6,6"
+                                    <Button Style="{StaticResource BtnSmOnHero}" Content="📊 游玩详情" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnShowPlayStats"
                                             ToolTip="查看导入日期、游玩总时长、最后关闭时间和历次会话记录"/>
                                     <!-- 完结馆入口：未完结→一键标记当天；已完结→绿色态，点击出「改日期/取消」菜单 -->
-                                    <Button Style="{StaticResource BtnSm}" x:Name="BtnMarkCompleted" Content="🏆 完结撒花"
+                                    <Button Style="{StaticResource BtnSmOnHero}" x:Name="BtnMarkCompleted" Content="🏆 完结撒花"
                                             VerticalAlignment="Center" Margin="0,0,6,6" Click="OnMarkCompleted"
                                             Visibility="{Binding IsCompleted, Converter={StaticResource InverseBoolToVis}}"
                                             ToolTip="通关了？把这款游戏收入完结馆（日期记为今天，之后可补改）"/>
-                                    <Button Style="{StaticResource BtnSm}" x:Name="BtnCompletedDone" VerticalAlignment="Center"
+                                    <Button Style="{StaticResource BtnSmOnHero}" x:Name="BtnCompletedDone" VerticalAlignment="Center"
                                             Margin="0,0,6,6" Click="OnCompletedDoneClick"
                                             Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}"
                                             ToolTip="点击可修改完结日期或取消完结">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="✓ 已完结 · " Foreground="{DynamicResource Green}"/>
-                                            <TextBlock Text="{Binding CompletedShortText}" Foreground="{DynamicResource Green}"/>
+                                            <TextBlock Text="✓ 已完结 · " Foreground="#4ADE80"/>
+                                            <TextBlock Text="{Binding CompletedShortText}" Foreground="#4ADE80"/>
                                         </StackPanel>
                                     </Button>
-                                    <Button Style="{StaticResource BtnSm}" Content="移除游戏" VerticalAlignment="Center" Margin="0,0,6,6"
+                                    <Button Style="{StaticResource BtnSmOnHero}" Content="移除游戏" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnRemoveGame"/>
-                                    <Button Style="{StaticResource BtnSm}" Content="自动获取" Margin="10,0,0,6"
+                                    <Button Style="{StaticResource BtnSmOnHero}" Content="刷新路径" Margin="0,0,0,6"
                                             VerticalAlignment="Center" Click="OnRefreshRules"
-                                            ToolTip="强制联网刷新 Wiki 存档规则，并重跑本地规则（rules.json），自动获取存档目录"/>
+                                            ToolTip="强制联网刷新 Wiki 存档规则，并重跑本地规则（rules.json），自动补全存档目录"/>
                                 </WrapPanel>
                             </StackPanel>
                         </StackPanel>
                     </Grid>
 
-                    <StackPanel Margin="26,18,26,24">
+                    <!-- 内容层：壁纸与辉光已上移到主体区左右通铺；此处只叠顶部重压渐变补横幅接缝 -->
+                    <Grid ClipToBounds="True">
+                        <Border Background="{DynamicResource UuArtVeilTop}"
+                                Opacity="{DynamicResource UuArtOpacity}" IsHitTestVisible="False"/>
+                        <StackPanel Margin="26,18,26,24">
                         <!-- 存档位置 -->
                         <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1" CornerRadius="12" Margin="0,0,0,16">
@@ -968,7 +993,8 @@
                                 </Border>
                             </StackPanel>
                         </Border>
-                    </StackPanel>
+                        </StackPanel>
+                    </Grid>
                 </StackPanel>
             </ScrollViewer>
         </DataTemplate>
@@ -1295,7 +1321,7 @@
         </Border>
 
         <!-- 主体 -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" ClipToBounds="True">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="SideCol" Width="310" MinWidth="240" MaxWidth="520"/>
                 <ColumnDefinition Width="Auto"/>
@@ -1303,9 +1329,22 @@
                 <ColumnDefinition Width="0"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 侧边栏 -->
-            <Border Grid.Column="0" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="0,0,1,0">
+            <!-- 主体统一艺术底：深色下列表+详情通铺同一张壁纸（左右连续无拼缝，均匀 60% 压暗，
+                 青/靛辉光横跨全宽）；浅色 UuArtOpacity=0，整层隐藏，外观与改造前一致 -->
+            <Grid Grid.ColumnSpan="4" Opacity="{DynamicResource UuArtOpacity}"
+                  IsHitTestVisible="False" ClipToBounds="True">
+                <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
+                       Stretch="UniformToFill"/>
+                <Border Background="{DynamicResource UuArtVeilFlat}"/>
+                <Border Background="{DynamicResource UuGlowTealBrush}"/>
+                <Border Background="{DynamicResource UuGlowIndigoBrush}"/>
+            </Grid>
+
+            <!-- 侧边栏：深色底色全透（SideBarBg），壁纸直透与右侧连成一片；
+                 玻璃语义覆盖由 Loaded 仅在深色挂载 ImmersiveScope，浅色为不透明白零变化 -->
+            <Border Grid.Column="0" x:Name="SideBar" Background="{DynamicResource SideBarBg}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,0,1,0" Loaded="OnImmersiveRootLoaded">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Margin="14,12,14,4">
                         <Grid>
@@ -1442,11 +1481,25 @@
 
             <!-- 详情 -->
             <Grid Grid.Column="2">
+                <!-- 未选中游戏时折叠宿主：DataTemplate 即便 Content=null 仍会实例化，
+                     不折叠会在空态玻璃下透出空段落/占位紫块（鬼影），必须整体隐藏 -->
                 <ContentControl x:Name="DetailHost" Content="{Binding SelectedGame}"
-                                ContentTemplate="{StaticResource GameDetail}"/>
-                <!-- 未选中游戏：右侧显示清新风格海报（覆盖在详情之上，用平移切换规避渲染异常） -->
-                <Border x:Name="EmptyState" Background="{DynamicResource Bg}"
-                        IsHitTestVisible="False">
+                                ContentTemplate="{StaticResource GameDetail}">
+                    <ContentControl.Style>
+                        <Style TargetType="ContentControl">
+                            <Style.Triggers>
+                                <Trigger Property="Content" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ContentControl.Style>
+                </ContentControl>
+                <!-- 未选中游戏：右侧显示清新风格海报（覆盖在详情之上，用平移切换规避渲染异常）。
+                     深色全透=通铺壁纸与左侧连续；浅色不透明奶油色（=原 Bg，零变化）；
+                     ImmersiveScope 仅深色挂载，让中间卡片玻璃化 -->
+                <Border x:Name="EmptyState" Background="{DynamicResource EmptyStateBg}"
+                        IsHitTestVisible="False" Loaded="OnImmersiveRootLoaded">
                     <Border.RenderTransform>
                         <TranslateTransform x:Name="PosterTransform" X="9999"/>
                     </Border.RenderTransform>
@@ -1477,13 +1530,23 @@
         </Grid>
 
         <!-- 完结馆：整层覆盖主体区（顶工具栏与状态栏保留）；Esc/返回/点卡片离开 -->
-        <Border x:Name="CompletedView" Grid.Row="1" Background="{DynamicResource Bg}"
-                Visibility="Collapsed" Focusable="True">
+        <Border x:Name="CompletedView" Grid.Row="1" Background="{DynamicResource UuBackdropBrush}"
+                Visibility="Collapsed" Focusable="True" Loaded="OnImmersiveRootLoaded">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
+                <!-- 内嵌背景：全域统一壁纸（原图清晰+深黑蓝压暗；浅色 UuArtOpacity=0 隐藏） -->
+                <Grid Grid.RowSpan="2" Opacity="{DynamicResource UuArtOpacity}"
+                      IsHitTestVisible="False" ClipToBounds="True">
+                    <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
+                           Stretch="UniformToFill"/>
+                    <Border Background="{DynamicResource UuArtVeil}"/>
+                </Grid>
+                <!-- 沉浸辉光层（通铺顶栏与收藏墙；浅色主题全透明） -->
+                <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowTealBrush}"/>
+                <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowIndigoBrush}"/>
                 <Border Grid.Row="0" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
                         BorderThickness="0,0,0,1" Padding="16,9">
                     <Grid>
@@ -1529,7 +1592,7 @@
 
                 <!-- 回顾详情：点海报卡进入（不离开完结馆）。站在玩家角度回顾：
                      完结日/入库/总时长/次数/平均/近 7·30 天/备份/历次会话 -->
-                <Border x:Name="CompletedDetail" Grid.Row="1" Background="{DynamicResource Bg}"
+                <Border x:Name="CompletedDetail" Grid.Row="1" Background="{DynamicResource UuBackdropBrush}"
                         Visibility="Collapsed">
                     <Border.Resources>
                         <Style x:Key="SessionBadgeC" TargetType="Border">
@@ -1551,6 +1614,16 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
+                        <!-- 内嵌背景：全域统一壁纸（原图清晰+深黑蓝压暗）；浅色 UuArtOpacity=0 隐藏 -->
+                        <Grid Grid.RowSpan="2" Opacity="{DynamicResource UuArtOpacity}"
+                              IsHitTestVisible="False" ClipToBounds="True">
+                            <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
+                                   Stretch="UniformToFill"/>
+                            <Border Background="{DynamicResource UuArtVeil}"/>
+                        </Grid>
+                        <!-- 沉浸辉光层（语义覆盖字典沿用父级 CompletedView 的 ImmersiveScope） -->
+                        <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowTealBrush}" IsHitTestVisible="False"/>
+                        <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowIndigoBrush}" IsHitTestVisible="False"/>
                         <Border Grid.Row="0" Background="{DynamicResource Panel}"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,9">
                             <!-- 左右两列：右列按钮组空间不足时自动折行，窄窗/宽侧栏下不再裁掉「在列表中查看」 -->

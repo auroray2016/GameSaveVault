@@ -92,7 +92,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DarkTitleBar.SetTheme(this, ThemeManager.IsDark);
         ThemeManager.ThemeChanged += UpdateThemeButton;
         UpdateThemeButton();
+        // 沉浸语义覆盖只在深色挂载：切主题时对三个沉浸根做增/删，浅色回落全局常态键
+        ThemeManager.ThemeChanged += RefreshImmersiveScopes;
         Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeButton;
+        Closed += (_, _) => ThemeManager.ThemeChanged -= RefreshImmersiveScopes;
         // Store.Init 已在 App.OnStartup 中完成（窗口创建前）；此处重复调用会导致整轮加载/快照重跑
         // 存盘失败必须让用户看见（否则界面显示成功、重启后记录消失）
         Store.SaveFailed += msg => Dispatcher.BeginInvoke(() => ShowToast(msg, true));
@@ -217,8 +220,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     CollectionViewSource.GetDefaultView(Store.Games).Refresh();
                     ShowToast($"已自动修正 {fixLog.Count} 处启动器/模拟器误入库问题");
                 }
-                // 手动封面历史命名 custom_* → 官方同款 {appId}.jpg（幂等；静默执行）
-                var coverFix = DataMigration.NormalizeCustomCovers();
+                // 手动封面历史命名 custom_* → 官方同款 {appId}.jpg（幂等；静默执行；大图转码丢后台防卡启动）
+                var coverFix = await DataMigration.NormalizeCustomCoversAsync();
                 if (coverFix.Count > 0)
                     CollectionViewSource.GetDefaultView(Store.Games).Refresh();
                 // 玩家1卡槽为 UI 虚拟显示（ListSlots 回退），入库零磁盘副作用，无需启动迁移
@@ -1533,7 +1536,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Text = text,
         FontSize = 12.5,
         FontWeight = FontWeights.Bold,
-        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+        Foreground = (System.Windows.Media.Brush)CompletedView.FindResource("TextSecondary"),
         Margin = new Thickness(2, 14, 0, 10),
     };
 
@@ -1546,13 +1549,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Text = $"{year} 年",
             FontSize = 15,
             FontWeight = FontWeights.Bold,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+            Foreground = (System.Windows.Media.Brush)CompletedView.FindResource("TextPrimary"),
         });
         row.Children.Add(new TextBlock
         {
             Text = $"{count} 款",
             FontSize = 12,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+            Foreground = (System.Windows.Media.Brush)CompletedView.FindResource("TextSecondary"),
             Margin = new Thickness(10, 3, 0, 0),
         });
         var panel = new StackPanel { Margin = new Thickness(2, 6, 0, 14) };
@@ -1561,7 +1564,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Height = 1,
             Margin = new Thickness(0, 10, 0, 0),
-            Background = (System.Windows.Media.Brush)FindResource("BorderBrush"),
+            Background = (System.Windows.Media.Brush)CompletedView.FindResource("BorderBrush"),
         });
         return new Border { Child = panel };
     }
@@ -1574,13 +1577,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Text = $"{month} 月",
             FontSize = 15,
             FontWeight = FontWeights.Bold,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+            Foreground = (System.Windows.Media.Brush)CompletedView.FindResource("TextPrimary"),
         });
         row.Children.Add(new TextBlock
         {
             Text = $"{count} 款",
             FontSize = 12,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+            Foreground = (System.Windows.Media.Brush)CompletedView.FindResource("TextSecondary"),
             Margin = new Thickness(10, 3, 0, 0),
         });
         var panel = new StackPanel { Margin = new Thickness(2, 6, 0, 14) };
@@ -1589,7 +1592,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Height = 1,
             Margin = new Thickness(0, 10, 0, 0),
-            Background = (System.Windows.Media.Brush)FindResource("BorderBrush"),
+            Background = (System.Windows.Media.Brush)CompletedView.FindResource("BorderBrush"),
         });
         return new Border { Child = panel };
     }
@@ -1701,16 +1704,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
             else
             {
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.CacheOption = BitmapCacheOption.OnLoad;   // 存完即可释放源文件
-                bmp.UriSource = new Uri(dlg.FileName, UriKind.Absolute);
-                bmp.EndInit();
-                bmp.Freeze();
-                var enc = new JpegBitmapEncoder { QualityLevel = 90 };
-                enc.Frames.Add(BitmapFrame.Create(bmp));
-                using var fs = File.Create(dest);
-                enc.Save(fs);
+                // 文件流转码：路径含 # 等字符时 UriSource 会截断路径
+                DataMigration.EncodeJpeg(dlg.FileName, dest);
             }
             g.PosterFile = dest;
             // 同游戏的删库留档旧海报（custom_app_{appId}.jpg）已被新图取代，清掉防孤儿
@@ -2966,6 +2961,67 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateThemeChips();
     }
 
+    // ===== 沉浸式三区（游戏详情/完结馆/完结回顾）语义覆盖的主题感知挂载 =====
+    // ImmersiveScope 把 Panel/文字/边框等语义键在子树内重映射到 Uu* 深色玻璃键。
+    // 该字典仅在深色主题挂到根节点 Resources；浅色/素雅浅色下移除，
+    // 子树直接使用全局主题键，保证浅色外观与改造前完全一致、绝不串色。
+    private static readonly Uri ImmersiveScopeUri = new(
+        "pack://application:,,,/GameSaveVault;component/Themes/ImmersiveScope.xaml", UriKind.Absolute);
+
+    // 所有沉浸根（详情模板根/完结馆/侧栏/空态海报）统一登记：
+    // DataTemplate 内的根无法用窗口字段访问，窗口级根又可能先于订阅存活，
+    // 故全部经 Loaded/Unloaded 对称注册，切主题时逐个增删覆盖字典
+    private readonly List<FrameworkElement> _immersiveRoots = new();
+
+    private void OnImmersiveRootLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement root) return;
+        if (!_immersiveRoots.Contains(root))
+        {
+            _immersiveRoots.Add(root);
+            root.Unloaded += OnImmersiveRootUnloaded;
+        }
+        ApplyImmersiveScope(root);
+    }
+
+    private void OnImmersiveRootUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement root) return;
+        root.Unloaded -= OnImmersiveRootUnloaded;
+        _immersiveRoots.Remove(root);
+    }
+
+    private void ApplyImmersiveScope(FrameworkElement root)
+    {
+        var merged = root.Resources.MergedDictionaries;
+        bool mounted = false;
+        foreach (ResourceDictionary d in merged)
+        {
+            if ((d.Source?.OriginalString ?? "").Contains("Themes/ImmersiveScope.xaml", StringComparison.OrdinalIgnoreCase))
+                mounted = true;
+        }
+        if (ThemeManager.IsDark)
+        {
+            if (!mounted)
+                merged.Add(new ResourceDictionary { Source = ImmersiveScopeUri });
+        }
+        else
+        {
+            for (int i = merged.Count - 1; i >= 0; i--)
+            {
+                if ((merged[i].Source?.OriginalString ?? "").Contains("Themes/ImmersiveScope.xaml", StringComparison.OrdinalIgnoreCase))
+                    merged.RemoveAt(i);
+            }
+        }
+    }
+
+    private void RefreshImmersiveScopes()
+    {
+        // 遍历副本：挂载/卸载不会改动列表本身，但模板根可能在切题瞬间失效，跳过即可
+        foreach (var root in _immersiveRoots.ToList())
+            ApplyImmersiveScope(root);
+    }
+
     private void UpdateThemeChips()
     {
         ThemeChipSystem.IsChecked = ThemeManager.Mode == ThemeManager.System;
@@ -3721,10 +3777,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ShowToast(string msg, bool error = false, System.Windows.FrameworkElement? anchor = null)
     {
-        var errBrush = (System.Windows.Media.Brush)FindResource("ToastErrorText");
-        var okBrush = (System.Windows.Media.Brush)FindResource("Accent");
-        var errText = (System.Windows.Media.Brush)FindResource("ToastErrorText");
-        var okText = (System.Windows.Media.Brush)FindResource("ToastText");
+        var errBrush = (System.Windows.Media.Brush)CompletedView.FindResource("ToastErrorText");
+        var okBrush = (System.Windows.Media.Brush)CompletedView.FindResource("Accent");
+        var errText = (System.Windows.Media.Brush)CompletedView.FindResource("ToastErrorText");
+        var okText = (System.Windows.Media.Brush)CompletedView.FindResource("ToastText");
 
         if (anchor != null)
         {

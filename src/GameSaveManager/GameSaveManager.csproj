@@ -18,6 +18,8 @@
   <ItemGroup>
     <!-- 同一 ico 作为 WPF 窗口标题栏/任务栏图标（Resource 供 pack URI 引用） -->
     <Resource Include="Assets\app.ico" />
+    <!-- 沉浸式三区统一壁纸（详情/完结馆/完结回顾背景，仅深色主题显示） -->
+    <Resource Include="Assets\immersive_wallpaper.png" />
   </ItemGroup>
 
   <ItemGroup>

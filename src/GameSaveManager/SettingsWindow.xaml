@@ -131,7 +131,8 @@
                                     <TextBlock Text="启动时自动扫描 Steam 库" FontSize="13"
                                                Foreground="{DynamicResource TextPrimary}"/>
                                     <TextBlock Text="每次打开软件时增量扫描，只新增不重复" FontSize="11"
-                                               Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"/>
+                                               Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"
+                                               TextWrapping="Wrap"/>
                                 </StackPanel>
                             </CheckBox>
                         </Border>
@@ -143,7 +144,8 @@
                             <StackPanel>
                                 <TextBlock Text="主题模式" FontSize="13" Foreground="{DynamicResource TextPrimary}"/>
                                 <TextBlock Text="选择后立即生效并自动保存；「跟随系统」会在 Windows 深浅色切换时自动联动"
-                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"/>
+                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"
+                                           TextWrapping="Wrap"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                     <RadioButton x:Name="ThemeSystemBtn" Style="{StaticResource ChipSm}" Content="跟随系统"
                                                  GroupName="ThemeMode" Tag="system" Checked="OnThemeModeChanged"/>
@@ -210,7 +212,7 @@
                                    Foreground="{DynamicResource TextPrimary}"/>
                         <TextBlock Text="留空使用默认位置；更改后新备份存入新目录，已有备份仍在原位置、可正常还原"
                                    FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                                   Margin="0,2,0,0"/>
+                                   Margin="0,2,0,0" TextWrapping="Wrap"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                         <Button Style="{StaticResource BtnSm}" Content="浏览…" Click="OnBrowseBackupDir"/>
@@ -242,7 +244,7 @@
                                    Foreground="{DynamicResource TextPrimary}"/>
                         <TextBlock Text="超出后自动删除最旧的备份（增量链不会被破坏）"
                                    FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                                   Margin="0,2,0,0"/>
+                                   Margin="0,2,0,0" TextWrapping="Wrap"/>
                     </StackPanel>
                     <TextBox x:Name="MaxKeepBox" Grid.Column="1" Width="64" Height="30"
                              VerticalContentAlignment="Center" TextAlignment="Center" FontSize="13"
@@ -267,7 +269,7 @@
                                    Foreground="{DynamicResource TextPrimary}"/>
                         <TextBlock Text="与上次备份对比，只打包有变化的文件，大幅节省空间"
                                    FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                                   Margin="0,2,0,0"/>
+                                   Margin="0,2,0,0" TextWrapping="Wrap"/>
                     </StackPanel>
                 </CheckBox>
 
@@ -282,7 +284,7 @@
                                    Foreground="{DynamicResource TextPrimary}"/>
                         <TextBlock Text="防止增量链过长，全量是链的起点"
                                    FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                                   Margin="0,2,0,0"/>
+                                   Margin="0,2,0,0" TextWrapping="Wrap"/>
                     </StackPanel>
                     <TextBox x:Name="FullEveryBox" Grid.Column="1" Width="64" Height="30"
                              VerticalContentAlignment="Center" TextAlignment="Center" FontSize="13"
@@ -478,7 +480,7 @@
         </Border>
 
         <TextBlock Text="游戏库 games.json · 备份 backups\ · 图标封面缓存 cache\" FontSize="11"
-                   Foreground="{DynamicResource TextSecondary}" Margin="4,8,0,0"/>
+                   Foreground="{DynamicResource TextSecondary}" Margin="4,8,0,0" TextWrapping="Wrap"/>
 
         <!-- 中文名数据源 -->
         <TextBlock Text="中文名数据源" FontSize="15" FontWeight="SemiBold"

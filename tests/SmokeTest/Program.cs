@@ -1620,6 +1620,108 @@ else
         Store.HomeDirOverride = null;
     }
 
+    // ── 25.5 归档残留删除联动 + 共用封面保护 + # 路径转码 ──
+    {
+        string vaultArc = Path.Combine(temp, "vaultArc");
+        Store.HomeDirOverride = vaultArc;
+        Store.Init();
+
+        // 归档留档游戏：备份目录在「未关联备份」里被删时，条目上的死记录/指针必须同步清掉
+        string arcSaves = Path.Combine(temp, "arc_saves");
+        Directory.CreateDirectory(arcSaves);
+        File.WriteAllText(Path.Combine(arcSaves, "s.sav"), "arc");
+        var gArc = new GameEntry { NameCN = "归档删档测试" };
+        gArc.SavePaths.Add(new SavePathEntry { Path = arcSaves });
+        Store.Games.Add(gArc);
+        // 先有一份通用备份，再建玩家：玩家会认领这份备份（顺序反了会撞「没有变化」）
+        var bArc = BackupService.Create(gArc, "归档前的备份");
+        ProfileService.CreatePlayer(gArc, "豪子");
+        gArc.SwitchAnchors["豪子"] = bArc.FileJson;
+        gArc.FavoriteWhy["豪子"] = "auto";
+        string arcBackupDir = BackupService.BackupDirFor(gArc);
+        gArc.Archived = true;
+        gArc.CompletedAt = new DateTime(2026, 9, 1);
+        Store.Save();
+        Check("归档: 归档游戏备份目录在未关联备份窗口可见",
+            BackupService.ListOrphans().Any(o => o.Dir.Equals(arcBackupDir, StringComparison.OrdinalIgnoreCase)),
+            arcBackupDir);
+        BackupService.DeleteOrphan(arcBackupDir);
+        Check("归档: 残留删除后条目死备份记录一并清除", gArc.Backups.Count == 0, $"n={gArc.Backups.Count}");
+        Check("归档: 可见备份列表同步清空（复活后不出幽灵行）",
+            gArc.VisibleBackups.Count == 0, $"n={gArc.VisibleBackups.Count}");
+        Check("归档: 指向死包的心目中指针一并摘除",
+            !gArc.SwitchAnchors.ContainsKey("豪子") && !gArc.FavoriteWhy.ContainsKey("豪子"), "anchor kept");
+        var reloaded = JsonSerializer.Deserialize<List<GameEntry>>(File.ReadAllText(Path.Combine(vaultArc, "games.json")))!;
+        var arcReloaded = reloaded.First(g => g.NameCN == "归档删档测试");
+        Check("归档: 死记录清除已落盘", arcReloaded.Backups.Count == 0
+            && !arcReloaded.SwitchAnchors.ContainsKey("豪子"), $"{arcReloaded.Backups.Count}");
+
+        // 对照：在库游戏的记录不受其他残留目录删除影响
+        string liveSaves = Path.Combine(temp, "live_saves");
+        Directory.CreateDirectory(liveSaves);
+        File.WriteAllText(Path.Combine(liveSaves, "l.sav"), "live");
+        var gLive = new GameEntry { NameCN = "在库游戏别误伤" };
+        gLive.SavePaths.Add(new SavePathEntry { Path = liveSaves });
+        Store.Games.Add(gLive);
+        var bLive = BackupService.Create(gLive, "在库备份");
+        string orphanDir = Path.Combine(Store.BackupRoot, BackupService.SafeName("无主残留游戏"));
+        Directory.CreateDirectory(orphanDir);
+        File.WriteAllText(Path.Combine(orphanDir, "old.zip"), "z");
+        BackupService.DeleteOrphan(orphanDir);
+        Check("归档: 删无主残留不误伤在库游戏的备份记录与文件",
+            gLive.Backups.Count == 1 && File.Exists(bLive.File) && !Directory.Exists(orphanDir), "");
+
+        // 共用缓存图片保护：双装/同 AppId 两条目共享 {appId}.jpg
+        var gShareA = new GameEntry { NameCN = "双装甲", AppId = 7001 };
+        var gShareB = new GameEntry { NameCN = "双装甲副本", AppId = 7001 };
+        Directory.CreateDirectory(Store.CoversDir);
+        string shared7001 = Store.CoverFileFor(7001);
+        File.WriteAllBytes(shared7001, new byte[2000]);
+        gShareA.CoverFile = shared7001;
+        gShareB.CoverFile = shared7001;
+        Store.Games.Add(gShareA);
+        Store.Games.Add(gShareB);
+        Check("共用封面: A 视角 7001.jpg 正被 B 引用",
+            Store.IsImageReferencedByOthers(shared7001, gShareA.Id), "");
+        gShareB.CoverFile = "";
+        gShareB.PosterFile = shared7001;
+        Check("共用封面: 海报字段引用也算被引用",
+            Store.IsImageReferencedByOthers(shared7001, gShareA.Id), "");
+        gShareB.PosterFile = "";
+        // 此刻只有 A 引用：排除 A 后无人引用（可安全删图）；不排除 A 时仍判定被引用
+        Check("共用封面: 解绑后引用判定准确（排除属主即无人引用）",
+            !Store.IsImageReferencedByOthers(shared7001, gShareA.Id)
+            && Store.IsImageReferencedByOthers(shared7001, "不排除任何人"), "");
+        // 双装场景下归一化迁移：B 的 custom_ 私有图不得改名覆盖 A 正用的 7001.jpg
+        gShareB.CoverFile = shared7001;
+        string customB = Path.Combine(Store.CoversDir, "custom_" + gShareB.Id + ".jpg");
+        File.WriteAllBytes(customB, new byte[] { 7, 7, 7 });
+        gShareB.CoverFile = customB;
+        var shareLog = DataMigration.NormalizeCustomCovers();
+        Check("共用封面: 迁移跳过被另一条目占用的 {appId}.jpg，私有图保留",
+            File.ReadAllBytes(shared7001).SequenceEqual(new byte[2000])
+            && gShareB.CoverFile == customB && File.Exists(customB),
+            $"ref={gShareB.CoverFile},log={shareLog.Count}");
+
+        // 含 # 路径的图片转 JPEG（UriSource 会截断路径，必须走文件流）
+        string hashDir = Path.Combine(temp, "图#集 2026");
+        Directory.CreateDirectory(hashDir);
+        string pngInHash = Path.Combine(hashDir, "cover #1.png");
+        File.WriteAllBytes(pngInHash, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="));
+        string jpgOut = Path.Combine(hashDir, "out.jpg");
+        DataMigration.EncodeJpeg(pngInHash, jpgOut);
+        byte[] jpgHead = File.Exists(jpgOut) ? File.ReadAllBytes(jpgOut).Take(2).ToArray() : new byte[2];
+        Check("转码: 含 # 路径的 PNG 可转成真 JPEG（FF D8 文件头）",
+            new FileInfo(jpgOut).Length > 100 && jpgHead[0] == 0xFF && jpgHead[1] == 0xD8,
+            $"len={(File.Exists(jpgOut) ? new FileInfo(jpgOut).Length : 0)}");
+        // 后台 STA 包装可正常执行（当前为幂等态，零改动返回）
+        var asyncLog = DataMigration.NormalizeCustomCoversAsync().GetAwaiter().GetResult();
+        Check("迁移: 后台 STA 异步包装执行成功（幂等态零改动）", asyncLog.Count == 0, $"n={asyncLog.Count}");
+
+        Store.HomeDirOverride = null;
+    }
+
     // ── 26. 运行中热备份与定时快照 ──
     {
         string vault15 = Path.Combine(temp, "vault15");
@@ -6623,20 +6725,40 @@ else
             && TitleHasPrimary("Text=\"还没有完结的游戏\""), "");
 
         string mainCs60 = File.ReadAllText(Path.Combine(srcRoot60, "MainWindow.xaml.cs"));
-        Check("完结馆/封面: 启动时执行 custom_ 封面 → {appId}.jpg 归一化迁移",
-            mainCs60.Contains("DataMigration.NormalizeCustomCovers()"), "");
+        Check("完结馆/封面: 启动时执行 custom_ 封面 → {appId}.jpg 归一化迁移（后台 STA 不卡启动）",
+            mainCs60.Contains("await DataMigration.NormalizeCustomCoversAsync()"), "");
         string editCs60 = File.ReadAllText(Path.Combine(srcRoot60, "EditGameWindow.xaml.cs"));
         Check("封面: 编辑窗手动传图按官方命名落盘（{appId}.jpg，非 jpg 转码 JPEG）",
             editCs60.Contains("SaveCoverCanonical")
             && editCs60.Contains("Store.CoverFileFor(appId)")
-            && editCs60.Contains("JpegBitmapEncoder")
+            && editCs60.Contains("DataMigration.EncodeJpeg")
             // 无 AppId 才允许退回 custom_ 兜底
             && editCs60.Contains(": CopyToCache(dlg.FileName, Store.CoversDir, \"custom_\" + _g.Id)"), "");
+        // 共用封面保护：改 AppId/换图删旧缓存前必须过引用检查；本地图片一律文件流解码（# 路径安全）
+        Check("封面: 删旧 {appId}.jpg 前检查其他条目引用（双装不互删封面）",
+            editCs60.Contains("Store.IsImageReferencedByOthers"), "");
+        Check("封面: 编辑窗不再用 UriSource 加载本地图片（含 # 路径会截断）",
+            !editCs60.Contains("UriSource = new Uri"), "");
+        Check("封面: 主窗口海报转码也不走 UriSource",
+            !mainCs60.Contains("UriSource = new Uri"), "");
+        string backupCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "BackupService.cs"));
+        Check("未关联备份: 删残留后同步清条目死备份记录（含归档条目）",
+            backupCs60.Contains("PruneRecordsUnder(full)")
+            && backupCs60.Contains("CloudSyncService.OnLocalBackupsDeleted(g, deadFiles)"), "");
+        string steamApiCs62 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "SteamApi.cs"));
+        Check("Steam: 商店资产查询带 10 分钟负缓存，老游戏不重复打必失败请求",
+            steamApiCs62.Contains("StoreAssetsFailedAt")
+            && steamApiCs62.Contains("StoreAssetsFailTtlMinutes"), "");
         string migCs60 = File.ReadAllText(Path.Combine(srcRoot60, "Services", "DataMigration.cs"));
         Check("封面: 归一化迁移实现（改名+转码+孤儿清理+幂等保存）",
             migCs60.Contains("public static List<string> NormalizeCustomCovers()")
             && migCs60.Contains("Store.CoverFileFor(g.AppId)")
             && migCs60.Contains("Directory.GetFiles(Store.CoversDir, \"custom_*\")"), "");
+        Check("封面: 归一化迁移跳过被另一条目占用的 {appId}.jpg，转码走文件流，后台 STA 执行",
+            migCs60.Contains("Store.IsImageReferencedByOthers(dest, g.Id)")
+            && migCs60.Contains("bmp.StreamSource = fs")
+            && !migCs60.Contains("UriSource = new Uri")
+            && migCs60.Contains("NormalizeCustomCoversAsync"), "");
         Check("完结馆: 十个事件处理器全部接线",
             mainCs60.Contains("OnOpenCompleted") && mainCs60.Contains("OnCloseCompleted")
             && mainCs60.Contains("OnCompletedModeChanged") && mainCs60.Contains("OnCompletedCardClick")
@@ -6791,6 +6913,109 @@ else
             && mainCs60.Contains("Store.PosterCustomFileFor(g.Id)")
             && mainCs60.Contains("g.AppId <= 0 || g.HasCustomPoster"), "");
 
+        // ── UU 风沉浸式深色（仅详情/完结馆/完结回顾局部；三套主题必须同名键，防浅色白屏）──
+        string uuDark60 = File.ReadAllText(Path.Combine(srcRoot60, "Themes", "Dark.xaml"));
+        string uuLight60 = File.ReadAllText(Path.Combine(srcRoot60, "Themes", "Light.xaml"));
+        string uuSoft60 = File.ReadAllText(Path.Combine(srcRoot60, "Themes", "LightSoft.xaml"));
+        string uuScopePath60 = Path.Combine(srcRoot60, "Themes", "ImmersiveScope.xaml");
+        string uuScope60 = File.Exists(uuScopePath60) ? File.ReadAllText(uuScopePath60) : "";
+        string uuApp60 = File.ReadAllText(Path.Combine(srcRoot60, "App.xaml"));
+        Check("沉浸式: Dark 定义深夜蓝黑底+青绿点睛（UuBackdropBrush / #13E2C8）",
+            uuDark60.Contains("x:Key=\"UuBackdropBrush\"")
+            && uuDark60.Contains("#13E2C8")
+            && uuDark60.Contains("x:Key=\"UuRunBrush\"")
+            && uuDark60.Contains("x:Key=\"UuGlowTealBrush\""), "");
+        Check("沉浸式: Light/LightSoft 同名 Uu* 键齐全（切换主题不抛缺键白屏）",
+            uuLight60.Contains("x:Key=\"UuBackdropBrush\"")
+            && uuLight60.Contains("x:Key=\"UuRunBrush\"")
+            && uuSoft60.Contains("x:Key=\"UuBackdropBrush\"")
+            && uuSoft60.Contains("x:Key=\"UuRunBrush\""), "");
+        Check("沉浸式: 艺术底透明度键三套主题齐全（深色1/浅色0）+ 压暗遮罩键",
+            uuDark60.Contains("x:Key=\"UuArtOpacity\">1")
+            && uuLight60.Contains("x:Key=\"UuArtOpacity\">0")
+            && uuSoft60.Contains("x:Key=\"UuArtOpacity\">0")
+            && uuDark60.Contains("x:Key=\"UuArtVeil\"")
+            && uuLight60.Contains("x:Key=\"UuArtVeil\"")
+            && uuSoft60.Contains("x:Key=\"UuArtVeil\""), "");
+        Check("沉浸式: UU 玻璃规格——背景遮罩只压 60%（#99），卡片半透（Panel alpha<=#8C）",
+            uuDark60.Contains("<Color x:Key=\"UuArtVeilC\">#990A1020</Color>")
+            && uuDark60.Contains("LinearGradientBrush x:Key=\"UuArtVeil\"")
+            && uuDark60.Contains("<GradientStop Color=\"#F50A1020\" Offset=\"0\"/>")
+            && uuDark60.Contains("<Color x:Key=\"UuPanelC\">#8C172244</Color>")
+            && uuDark60.Contains("<Color x:Key=\"UuPanel2C\">#661E2A52</Color>"), "");
+        Check("沉浸式: 浅色运行按钮为纯色（UuRunBrush 两 stop 同色=原 AccentPrimary）",
+            uuLight60.Split(new[]{"x:Key=\"UuRunBrush\""}, StringSplitOptions.None)[1].Contains("<GradientStop Color=\"#5690EE\" Offset=\"0\"/>")
+            && uuLight60.Split(new[]{"x:Key=\"UuRunBrush\""}, StringSplitOptions.None)[1].Contains("<GradientStop Color=\"#5690EE\" Offset=\"1\"/>")
+            && uuSoft60.Split(new[]{"x:Key=\"UuRunBrush\""}, StringSplitOptions.None)[1].Contains("<GradientStop Color=\"#4C86E6\" Offset=\"1\"/>"), "");
+        Check("沉浸式: ImmersiveScope 只覆盖表面/文字/行态；品牌色不覆盖（筹码/Chip 保持全局宝蓝），列表选中卡面走淡青玻璃",
+            uuScope60.Contains("x:Key=\"Panel\"")
+            && uuScope60.Contains("x:Key=\"BorderBrush\"")
+            && uuScope60.Contains("x:Key=\"TextPrimary\"")
+            && uuScope60.Contains("x:Key=\"CardSelectedBg\"")
+            && !uuScope60.Contains("x:Key=\"Accent\"")
+            && !uuScope60.Contains("x:Key=\"AccentPrimary\"")
+            && !uuScope60.Contains("UuTealC")
+            && !uuScope60.Contains("x:Key=\"ItemSelectedBg\""), "");
+        Check("沉浸式: ImmersiveScope 改为运行时按主题动态挂载（XAML 不得静态合并，防浅色串色）",
+            !xaml60.Contains("Source=\"Themes/ImmersiveScope.xaml\"")
+            && xaml60.Contains("Loaded=\"OnImmersiveRootLoaded\"")
+            && xaml60.Contains("x:Name=\"DetailImmersiveRoot\""), "");
+        string winCs60 = File.ReadAllText(Path.Combine(srcRoot60, "MainWindow.xaml.cs"));
+        Check("沉浸式: code-behind 仅深色挂载覆盖字典，沉浸根 Loaded/Unloaded 对称登记，切主题统一刷新",
+            winCs60.Contains("component/Themes/ImmersiveScope.xaml")
+            && winCs60.Contains("ThemeManager.IsDark")
+            && winCs60.Contains("ThemeManager.ThemeChanged += RefreshImmersiveScopes")
+            && winCs60.Contains("private void ApplyImmersiveScope(FrameworkElement root)")
+            && winCs60.Contains("_immersiveRoots")
+            && winCs60.Contains("OnImmersiveRootUnloaded"), "");
+        Check("沉浸式: 详情/完结馆/完结回顾三处接入沉浸底，运行键走青绿样式",
+            xaml60.Contains("x:Name=\"CompletedView\" Grid.Row=\"1\" Background=\"{DynamicResource UuBackdropBrush}\"")
+            && xaml60.Contains("x:Name=\"CompletedDetail\" Grid.Row=\"1\" Background=\"{DynamicResource UuBackdropBrush}\"")
+            && xaml60.Contains("Background=\"{DynamicResource UuBackdropBrush}\"")
+            && xaml60.Contains("Style=\"{StaticResource BtnUuTeal}\"")
+            && xaml60.Contains("x:Name=\"BtnRun\"")
+            && xaml60.Contains("x:Name=\"BtnCdRun\""), "");
+        Check("沉浸式: 壁纸三处（主体通铺+完结馆+回顾）清晰不模糊不放大；UuArtOpacity 四处受控",
+            xaml60.Split(new[]{"Source=\"/GameSaveVault;component/Assets/immersive_wallpaper.png\""}, StringSplitOptions.None).Length == 4
+            && xaml60.Split(new[]{"Opacity=\"{DynamicResource UuArtOpacity}\""}, StringSplitOptions.None).Length == 5
+            && !xaml60.Contains("BlurEffect")
+            && !xaml60.Contains("ScaleX=\"1.06\"")
+            && xaml60.Contains("Background=\"{DynamicResource UuArtVeil}\""), "");
+        Check("沉浸式: 深色列表与右侧协调——主体区通铺壁纸（均匀压暗+辉光跨列），侧栏/空态底色深色全透、浅色不透明",
+            xaml60.Contains("Grid.ColumnSpan=\"4\" Opacity=\"{DynamicResource UuArtOpacity}\"")
+            && xaml60.Contains("Background=\"{DynamicResource UuArtVeilFlat}\"")
+            && xaml60.Contains("Background=\"{DynamicResource UuArtVeilTop}\"")
+            && xaml60.Contains("x:Name=\"SideBar\" Background=\"{DynamicResource SideBarBg}\"")
+            && xaml60.Contains("x:Name=\"EmptyState\" Background=\"{DynamicResource EmptyStateBg}\"")
+            && xaml60.Contains("x:Name=\"DetailImmersiveRoot\"")
+            && xaml60.Contains("VerticalScrollBarVisibility=\"Auto\" Background=\"Transparent\"")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#00000000\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#00000000\"/>")
+            && uuDark60.Contains("x:Key=\"UuArtVeilFlat\"")
+            && uuDark60.Contains("x:Key=\"UuArtVeilTop\"")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#FFFFFFFF\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#FFF3EFE6\"/>")
+            && uuLight60.Contains("x:Key=\"UuArtVeilFlat\"")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#FFFFFFFF\"/>")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#FFF4F6F8\"/>")
+            && uuSoft60.Contains("x:Key=\"UuArtVeilTop\""), "");
+        Check("沉浸式: 未选游戏时空态不得透出详情鬼影（DetailHost Content=null 折叠，紫色占位块不渲染）",
+            xaml60.Contains("<Trigger Property=\"Content\" Value=\"{x:Null}\">")
+            && xaml60.Contains("<Setter Property=\"Visibility\" Value=\"Collapsed\"/>"), "");
+        Check("沉浸式: 全局主题底色未被改动（只允许局部换肤，Bg 仍是炭黑；侧栏白只来自 SideBarBg 浅色键）",
+            uuDark60.Contains("<SolidColorBrush x:Key=\"Bg\" Color=\"#12141A\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"Panel\" Color=\"#1A1D25\"/>"), "");
+        Check("沉浸式: 统一壁纸 PNG 已作为 Resource 编入程序集",
+            File.Exists(Path.Combine(srcRoot60, "Assets", "immersive_wallpaper.png"))
+            && File.ReadAllText(Path.Combine(srcRoot60, "GameSaveManager.csproj")).Contains("<Resource Include=\"Assets\\immersive_wallpaper.png\" />"), "");
+        Check("沉浸式: 完结回顾运行按钮保持原 BtnSm（浅色零变化），仅横幅运行键用 BtnUuTeal",
+            xaml60.Contains("x:Name=\"BtnCdRun\" Style=\"{StaticResource BtnSm}\"")
+            && xaml60.Split(new[]{"BtnUuTeal"}, StringSplitOptions.None).Length == 2, "");
+        Check("沉浸式: App.xaml 定义 BtnUuTeal（青绿渐变+辉光，浅色回退常态宝蓝）",
+            uuApp60.Contains("x:Key=\"BtnUuTeal\"")
+            && uuApp60.Contains("DynamicResource UuRunBrush")
+            && uuApp60.Contains("DynamicResource UuTealGlowColor"), "");
+
         // 工具栏：扫描文件夹 + 手动添加 合并为一个向导；低频项收进「⋯ 更多」
         string addWinXaml60 = Path.Combine(srcRoot60, "AddGamesWindow.xaml");
         string addWinCs60 = Path.Combine(srcRoot60, "AddGamesWindow.xaml.cs");
@@ -6926,6 +7151,37 @@ string popupBodyHead61 = popupBodyPos61 >= 0 ? perfXaml61.Substring(popupBodyPos
 Check("视觉守卫: 主题弹窗外圈无描边（仅面板底色）",
     popupBodyHead61.Contains("BorderThickness=\"0\"")
     && !popupBodyHead61.Contains("BorderBrush="), "");
+
+// 浅色主题横幅可读性：封面底部恒叠 #EE 黑遮罩（与主题无关的暗底），横幅按钮/徽章/已完结字
+// 必须用固定浅色，不得绑 TextSecondary 等为白底设计的主题色，否则浅色主题下压黑底发糊
+string perfApp61 = File.ReadAllText(Path.Combine(perfRoot61, "src", "GameSaveManager", "App.xaml"));
+Check("视觉守卫: App.xaml 定义横幅暗底专用 BtnSmOnHero（固定浅色玻璃样式）",
+    perfApp61.Contains("x:Key=\"BtnSmOnHero\"")
+    && perfApp61.Contains("Foreground\" Value=\"#EDF1F8\"")
+    && perfApp61.Contains("BorderBrush\" Value=\"#5CFFFFFF\""), "");
+Check("视觉守卫: 横幅定义 HeroBadge/HeroBadgeText 玻璃徽章",
+    perfXaml61.Contains("x:Key=\"HeroBadge\"") && perfXaml61.Contains("x:Key=\"HeroBadgeText\"")
+    && perfXaml61.Contains("Foreground\" Value=\"#F5F7FA\""), "");
+int heroStart61 = perfXaml61.IndexOf("<WrapPanel Margin=\"0,8,0,0\"", StringComparison.Ordinal);
+int heroWrapEnd61 = heroStart61 >= 0 ? perfXaml61.IndexOf("</WrapPanel>", heroStart61, StringComparison.Ordinal) : -1;
+string heroBar61 = heroWrapEnd61 > heroStart61
+    ? perfXaml61.Substring(heroStart61, heroWrapEnd61 - heroStart61) : "";
+Check("视觉守卫: 横幅操作按钮全部使用 BtnSmOnHero（暗底固定浅色）",
+    heroBar61.Contains("Style=\"{StaticResource BtnSmOnHero}\"")
+    && !heroBar61.Contains("Style=\"{StaticResource BtnSm}\""), "");
+// 间距等距：旧的 8/10 特殊左边距必须全部消失，2 徽章+5 按钮统一右距 6（末项除外，共 7 处）
+Check("视觉守卫: 横幅徽章/按钮间距统一 6px（无 8/10 参差）",
+    !heroBar61.Contains("Margin=\"8,0,0,6\"")
+    && !heroBar61.Contains("Margin=\"10,0")
+    && heroBar61.Split([ "Margin=\"0,0,6,6\"" ], StringSplitOptions.None).Length >= 8,
+    (heroBar61.Split([ "Margin=\"0,0,6,6\"" ], StringSplitOptions.None).Length - 1).ToString());
+Check("视觉守卫: 横幅徽章使用 HeroBadge 且已完结字为固定亮绿",
+    heroBar61.Contains("Style=\"{StaticResource HeroBadge}\"")
+    && !heroBar61.Contains("Style=\"{StaticResource Badge}\"")
+    && heroBar61.Contains("Foreground=\"#4ADE80\""), "");
+Check("视觉守卫: 「自动获取」已改名「刷新路径」",
+    perfXaml61.Contains("Content=\"刷新路径\"")
+    && !perfXaml61.Contains("Content=\"自动获取\""), "");
 
 Console.WriteLine($"\n结果: {pass} 通过, {fail} 失败");
 try { Directory.Delete(temp, true); } catch { }

@@ -19,6 +19,16 @@ public partial class OrphanBackupsWindow : Window
         Reload();
     }
 
+    /// <summary>
+    /// 名称列吃掉列表剩余宽度：四列固定宽合计 372（内容104+占用72+最近文件92+操作104），
+    /// 再留 8px 边距余量；窄窗时最小 140，保证「打开/删除」按钮永不被裁。
+    /// </summary>
+    private void OnOrphanListSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        const double fixedCols = 104 + 72 + 92 + 104 + 8;
+        ColName.Width = System.Math.Max(140, e.NewSize.Width - fixedCols);
+    }
+
     private void Reload()
     {
         var items = BackupService.ListOrphans();

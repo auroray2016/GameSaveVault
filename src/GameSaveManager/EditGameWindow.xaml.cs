@@ -38,10 +38,12 @@ public partial class EditGameWindow : Window
         {
             try
             {
+                // 走文件流而非 UriSource：路径含 # 等 URI 保留字符时 Uri 会截断路径导致加载失败
+                using var fs = File.OpenRead(path);
                 var bmp = new BitmapImage();
                 bmp.BeginInit();
-                bmp.CacheOption = BitmapCacheOption.OnLoad;   // 释放文件句柄
-                bmp.UriSource = new Uri(path);
+                bmp.CacheOption = BitmapCacheOption.OnLoad;   // 解码完即释放文件句柄
+                bmp.StreamSource = fs;
                 bmp.EndInit();
                 img.Source = bmp;
                 empty.Visibility = Visibility.Collapsed;
@@ -122,7 +124,11 @@ public partial class EditGameWindow : Window
         if (dlg.ShowDialog(this) != true) return;
         try
         {
-            _pendingCover = CopyToCache(dlg.FileName, Store.CoversDir, "custom_" + _g.Id);
+            // 有 AppId 时优先与官方下载封面同款命名（{appId}.jpg）；被另一条目共用或学习版才用 custom_{gameId} 兜底
+            int coverAppId = CurrentAppId();
+            _pendingCover = coverAppId > 0
+                ? SavePickedCover(dlg.FileName, coverAppId)
+                : CopyToCache(dlg.FileName, Store.CoversDir, "custom_" + _g.Id);
             ShowPreview(CoverPreview, CoverEmpty, _pendingCover);
             ErrText.Visibility = Visibility.Collapsed;
         }
@@ -180,6 +186,38 @@ public partial class EditGameWindow : Window
         File.Copy(src, dest, overwrite: true);
         return dest;
     }
+
+    /// <summary>把本地图片以「官方下载封面」同款命名落盘：cache\covers\{appId}.jpg。
+    /// jpg/jpeg 直接复制（无损）；png/webp/bmp 等经 WIC 转码为 JPEG（质量 90），保证文件与命名都是真 jpg。
+    /// 调用前须确认 {appId}.jpg 没被另一条目引用（双装共用），否则会覆盖另一条目的封面。</summary>
+    private static string SaveCoverCanonical(string src, int appId)
+    {
+        string dest = Store.CoverFileFor(appId);
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+        string ext = Path.GetExtension(src).ToLowerInvariant();
+        if (ext is ".jpg" or ".jpeg")
+        {
+            File.Copy(src, dest, overwrite: true);
+            return dest;
+        }
+        DataMigration.EncodeJpeg(src, dest);   // 文件流解码，兼容含 # 的路径
+        return dest;
+    }
+
+    /// <summary>选手动封面的落盘目标选择：该 AppId 的官方缓存位没被别的条目占用 → {appId}.jpg（与官方同款命名，
+    /// 重删再添可零网络认领）；已被另一条目引用（双装/同 AppId 两条目）→ 退回 custom_{gameId}.* 私有位，
+    /// 换图绝不覆盖另一条目的封面。</summary>
+    private string SavePickedCover(string src, int appId)
+    {
+        string canonical = Store.CoverFileFor(appId);
+        return Store.IsImageReferencedByOthers(canonical, _g.Id)
+            ? CopyToCache(src, Store.CoversDir, "custom_" + _g.Id)
+            : SaveCoverCanonical(src, appId);
+    }
+
+    /// <summary>AppId 输入框当前值；无效/为空返回 0。</summary>
+    private int CurrentAppId() =>
+        int.TryParse(AppIdBox.Text.Trim(), out int a) && a > 0 ? a : 0;
 
     private async void OnSearchAppId(object s, RoutedEventArgs e)
     {
@@ -566,7 +604,42 @@ public partial class EditGameWindow : Window
             _g.ExePath = exe;
             _g.InstallDir = Path.GetDirectoryName(exe) ?? "";
         }
-        if (_pendingCover != null) _g.CoverFile = _pendingCover;
+        if (_pendingCover != null)
+        {
+            // 落盘前按最终 AppId 规整封面命名：
+            //  ① 选图时无 AppId（存成 custom_*），保存时补上了 → 转为 {appId}.jpg；
+            //  ② 选图后改过 AppId（已存成旧 {oldId}.jpg）→ 挪到新 {appId}.jpg，删旧文件。
+            // 新 AppId 缓存位已被另一条目占用（双装）→ 退回 custom_{gameId} 私有位，不覆盖共用图；
+            // 旧文件若仍被别的条目引用则保留，只解绑本条目。
+            string pendingName = Path.GetFileName(_pendingCover);
+            string canonical = appId > 0 ? Store.CoverFileFor(appId) : "";
+            bool needFix = appId > 0 && File.Exists(_pendingCover)
+                && !string.Equals(_pendingCover, canonical, StringComparison.OrdinalIgnoreCase)
+                && (pendingName.StartsWith("custom_", StringComparison.OrdinalIgnoreCase)
+                    || pendingName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase));
+            if (needFix)
+            {
+                try
+                {
+                    bool newSlotShared = File.Exists(canonical)
+                        && Store.IsImageReferencedByOthers(canonical, _g.Id);
+                    string moved;
+                    if (newSlotShared)
+                        // pending 已是按本条目命名的 custom_ 私有图 → 原地保留（CopyToCache 会先删同前缀文件，自复制必抛）
+                        moved = pendingName.StartsWith("custom_", StringComparison.OrdinalIgnoreCase)
+                            ? _pendingCover
+                            : CopyToCache(_pendingCover, Store.CoversDir, "custom_" + _g.Id);
+                    else
+                        moved = SaveCoverCanonical(_pendingCover, appId);
+                    if (!string.Equals(moved, _pendingCover, StringComparison.OrdinalIgnoreCase)
+                        && !Store.IsImageReferencedByOthers(_pendingCover, _g.Id))
+                        File.Delete(_pendingCover);
+                    _pendingCover = moved;
+                }
+                catch { /* 规整失败保留原 pending，不阻塞保存 */ }
+            }
+            _g.CoverFile = _pendingCover;
+        }
         if (_pendingIcon != null) _g.IconFile = _pendingIcon;
         _g.Refresh();
         // 手动填写的中文名也写入本地库（含 CJK 才入库，避免英文占位），今后扫描/重装直接复用

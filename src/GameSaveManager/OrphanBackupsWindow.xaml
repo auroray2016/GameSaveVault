@@ -1,7 +1,7 @@
 <Window x:Class="GameSaveManager.OrphanBackupsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="备份管理 · GameSaveVault"
+        Title="未关联备份 · GameSaveVault"
         Icon="Assets/app.ico"
         Width="760" Height="540" MinHeight="440" MinWidth="580"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
@@ -43,7 +43,8 @@
             <Grid Margin="4">
                 <ListView x:Name="OrphanList" BorderThickness="0" Background="Transparent"
                           Foreground="{DynamicResource TextPrimary}"
-                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          SizeChanged="OnOrphanListSizeChanged">
                     <ListView.Resources>
                         <!-- 重写 ListViewItem 模板：GridViewRowPresenter 正确承载 GridView 列（不能用 ContentPresenter），
                              选中底色用 RowSelectedBg，比界面底色更深形成反色对比。 -->
@@ -91,7 +92,8 @@
                     </ListView.Resources>
                     <ListView.View>
                         <GridView>
-                            <GridViewColumn Header="名称" Width="260">
+                            <!-- 首列弹性：宽度由 OnOrphanListSizeChanged 按列表实际宽分配，其余四列固定，窄窗不再裁掉操作按钮 -->
+                            <GridViewColumn x:Name="ColName" Header="名称" Width="260">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel VerticalAlignment="Center" Margin="2,3">
@@ -105,13 +107,34 @@
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <GridViewColumn Header="内容" Width="120"
-                                            DisplayMemberBinding="{Binding DetailText}"/>
-                            <GridViewColumn Header="占用" Width="90"
-                                            DisplayMemberBinding="{Binding SizeText}"/>
-                            <GridViewColumn Header="最近文件" Width="100"
-                                            DisplayMemberBinding="{Binding LastWriteText}"/>
-                            <GridViewColumn Header="操作" Width="140">
+                            <GridViewColumn Header="内容" Width="104">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DetailText}" FontSize="11.5"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding DetailText}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="占用" Width="72">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SizeText}" FontSize="11.5"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="最近文件" Width="92">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding LastWriteText}" FontSize="11.5"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="操作" Width="104">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" Margin="2,3">
@@ -131,7 +154,7 @@
                 <StackPanel x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"
                             IsHitTestVisible="False">
                     <TextBlock Text="🗂" FontSize="40" HorizontalAlignment="Center" Opacity="0.5"/>
-                    <TextBlock Text="没有残留备份" FontSize="14"
+                    <TextBlock Text="没有未关联备份" FontSize="14"
                                Foreground="{DynamicResource TextSecondary}" Margin="0,10,0,0"/>
                     <TextBlock Text="磁盘上的备份都属于在库游戏" FontSize="11.5"
                                Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0"/>

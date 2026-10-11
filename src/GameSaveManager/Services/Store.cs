@@ -101,6 +101,8 @@ public static class Store
     public static string CloudStateFile => Path.Combine(BaseDir, "cloud-state.json");
     public static string IconsDir => Path.Combine(BaseDir, "cache", "icons");
     public static string CoversDir => Path.Combine(BaseDir, "cache", "covers");
+    /// <summary>完结馆竖版海报缓存目录（Steam library_600x900.jpg）。</summary>
+    public static string PostersDir => Path.Combine(BaseDir, "cache", "posters");
     /// <summary>备份根目录：设置里可自定义（空 = 数据目录\backups）。设置加载前访问会回退默认值。</summary>
     public static string BackupRoot =>
         string.IsNullOrWhiteSpace(Settings.BackupDir)
@@ -679,6 +681,63 @@ public static class Store
 
     public static string IconFileFor(string id) => Path.Combine(IconsDir, id + ".png");
     public static string CoverFileFor(int appId) => Path.Combine(CoversDir, appId + ".jpg");
+    /// <summary>完结馆竖版海报本地缓存路径（按 AppId；不存在时由 SteamApi.DownloadPoster 拉取）。</summary>
+    public static string PosterFileFor(int appId) => Path.Combine(PostersDir, appId + ".jpg");
+    /// <summary>用户手动换的完结馆海报（按游戏 Id；与官方 {appId}.jpg 区分，便于「恢复官方」）。</summary>
+    public static string PosterCustomFileFor(string gameId) => Path.Combine(PostersDir, "custom_" + gameId + ".jpg");
+    /// <summary>删游戏时为手换海报保留的按 AppId 存档：重新添加同一游戏时自动认领，无需联网重下。</summary>
+    public static string PosterCustomAppFileFor(int appId) => Path.Combine(PostersDir, "custom_app_" + appId + ".jpg");
+
+    /// <summary>本地图片缓存是否为有效图（与下载器口径一致：>1KB，防 0 字节/错误页占位）。</summary>
+    public static bool IsUsableImage(string? file)
+    {
+        try { return !string.IsNullOrEmpty(file) && File.Exists(file) && new FileInfo(file).Length > 1000; }
+        catch { return false; }
+    }
+
+    /// <summary>缓存图片（横封/竖海报）是否被「除指定条目外」的其他条目引用（含归档留档条目）。
+    /// 改 AppId 换封面删旧 {oldAppId}.jpg 前必须先问：双装/多条目共用同一 AppId 缓存图时，
+    /// 删了会让另一条目封面变空白。</summary>
+    public static bool IsImageReferencedByOthers(string? file, string exceptGameId)
+    {
+        if (string.IsNullOrEmpty(file)) return false;
+        return Games.Any(g => !string.Equals(g.Id, exceptGameId, StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(g.CoverFile, file, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(g.PosterFile, file, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// 按 AppId 认领磁盘上已有的横封/竖海报/手换海报（纯本地、零网络）。
+    /// 场景：删游戏后重新添加、空库重建、扫描重复入库——条目是新建的、字段为空，
+    /// 但 cache 里的老图还在；直接指认，避免慢网/断网下重复下载或封面空白。
+    /// 优先级：手换海报保留档(custom_app_) ＞ 官方竖海报 ＞ 横封面。返回是否改动了条目。
+    /// </summary>
+    public static bool AdoptCachedArtwork(GameEntry g)
+    {
+        if (g.AppId <= 0) return false;
+        bool changed = false;
+
+        if (!IsUsableImage(g.CoverFile))
+        {
+            string cover = CoverFileFor(g.AppId);
+            if (IsUsableImage(cover)) { g.CoverFile = cover; changed = true; }
+        }
+
+        // 用户已手换（字段指向 custom_ 且文件在）就不碰；否则认领 custom_app 保留档，再认领官方竖图
+        bool ownCustom = !string.IsNullOrEmpty(g.PosterFile)
+            && Path.GetFileName(g.PosterFile).StartsWith("custom_", StringComparison.OrdinalIgnoreCase)
+            && IsUsableImage(g.PosterFile);
+        if (!ownCustom && !IsUsableImage(g.PosterFile))
+        {
+            string customKeep = PosterCustomAppFileFor(g.AppId);
+            string official = PosterFileFor(g.AppId);
+            if (IsUsableImage(customKeep)) { g.PosterFile = customKeep; changed = true; }
+            else if (IsUsableImage(official)) { g.PosterFile = official; changed = true; }
+        }
+
+        if (changed) g.Refresh();
+        return changed;
+    }
 
     public static string TimeAgo(DateTime t)
     {
@@ -753,6 +812,25 @@ public static class Store
 
         // 7) 玩家镜像目录 profiles\{dropId} → profiles\{keepId}
         try { ProfileService.MergeRoots(keep, drop); } catch { }
+
+        // 8) 完结档案：keep 未完结而 drop 已完结（归档通关卡撞上同游戏新条目）→ 继承通关日期与海报
+        if (keep.CompletedAt == DateTime.MinValue && drop.CompletedAt != DateTime.MinValue)
+        {
+            keep.CompletedAt = drop.CompletedAt;
+            if (!string.IsNullOrEmpty(drop.PosterFile) && File.Exists(drop.PosterFile))
+            {
+                try
+                {
+                    string dst = Path.GetFileName(drop.PosterFile).StartsWith("custom_", StringComparison.OrdinalIgnoreCase)
+                        ? PosterCustomFileFor(keep.Id)
+                        : PosterFileFor(keep.AppId);
+                    if (!string.Equals(dst, drop.PosterFile, StringComparison.OrdinalIgnoreCase))
+                        File.Copy(drop.PosterFile, dst, overwrite: true);
+                    keep.PosterFile = dst;
+                }
+                catch { /* 海报复制失败：兜底链还能走封面/图标，不阻断合并 */ }
+            }
+        }
 
         keep.RefreshProfiles();
         keep.RefreshVisibleBackups();

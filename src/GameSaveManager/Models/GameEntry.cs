@@ -13,6 +13,15 @@ public class GameEntry : INotifyPropertyChanged
     public string NameEN { get; set; } = "";
     public string Type { get; set; } = "Local";            // Steam | Local
     public int AppId { get; set; }                          // 0 = 无
+
+    private bool _archived;
+    /// <summary>已从游戏库移除但完结档案保留：游戏列表/备份/监控全部跳过，完结馆仍展示（带「已移出」角标）。
+    /// 重新扫描或添加向导扫到同一游戏时就地复活；删档案只能在完结馆内操作。</summary>
+    public bool Archived
+    {
+        get => _archived;
+        set { if (_archived != value) { _archived = value; OnPropertyChanged(nameof(Archived)); } }
+    }
     /// <summary>AppId 已人工/迁移钉死（如同名系列新作误配初代），联网回填不得覆盖。</summary>
     public bool AppIdLocked { get; set; }
     public string ExePath { get; set; } = "";
@@ -21,6 +30,27 @@ public class GameEntry : INotifyPropertyChanged
     public string CoverFile { get; set; } = "";             // 本地封面 jpg 绝对路径
     public DateTime LastPlayed { get; set; } = DateTime.MinValue;   // 最近「打开」时间（Steam manifest 在启动时写入；本应用启动时也记录），仅作回退/参考
     public DateTime AddedAt { get; set; } = DateTime.MinValue;      // 入库时间（旧数据无此字段，排序垫底）
+
+    // ── 完结馆 ────────────────────────────────────────────
+    /// <summary>完结时间（MinValue=未完结）。完结馆按此倒序、按月份分组；详情页「标记完结」记为当天，可补改。</summary>
+    public DateTime CompletedAt { get; set; } = DateTime.MinValue;
+    private string _posterFile = "";
+    /// <summary>完结馆竖版海报本地缓存（Steam library_600x900，标记完结时后台补下载；
+    /// 用户手动换的图也写入本字段，文件名 custom_ 前缀）。
+    /// 空或文件丢失→展示走 <see cref="PosterDisplayFile"/> 兜底链；下载失败后「更新数据库」会再试。</summary>
+    public string PosterFile
+    {
+        get => _posterFile;
+        set
+        {
+            _posterFile = value ?? "";
+            OnPropertyChanged(nameof(PosterFile));
+            OnPropertyChanged(nameof(HasPoster));
+            OnPropertyChanged(nameof(HasCustomPoster));
+            OnPropertyChanged(nameof(PosterDisplayFile));
+            OnPropertyChanged(nameof(HasPosterDisplay));
+        }
+    }
 
     // ── 游玩统计（本应用进程监测，安装前的历史无法追溯）──────────────
     /// <summary>最后一次游戏进程关闭时刻（卡片时间/「最近游玩」排序的首选口径）。</summary>
@@ -143,6 +173,37 @@ public class GameEntry : INotifyPropertyChanged
     public bool HasIcon => !string.IsNullOrEmpty(IconFile) && File.Exists(IconFile);
     [JsonIgnore]
     public bool HasCover => !string.IsNullOrEmpty(CoverFile) && File.Exists(CoverFile);
+
+    // ── 完结馆显示属性 ──
+    [JsonIgnore]
+    public bool IsCompleted => CompletedAt != DateTime.MinValue;
+    [JsonIgnore]
+    public bool HasPoster => !string.IsNullOrEmpty(PosterFile) && File.Exists(PosterFile);
+    /// <summary>当前海报是不是用户手动换的（文件名 custom_ 前缀且文件在）——决定「恢复官方」入口。</summary>
+    [JsonIgnore]
+    public bool HasCustomPoster => HasPoster
+        && Path.GetFileName(PosterFile).StartsWith("custom_", StringComparison.OrdinalIgnoreCase);
+    /// <summary>完结馆实际展示图（兜底链）：竖海报 → 横封面 → 图标；都没有→空串（界面显示首字占位）。</summary>
+    [JsonIgnore]
+    public string PosterDisplayFile =>
+        HasPoster ? PosterFile
+        : HasCover ? CoverFile
+        : HasIcon ? IconFile : "";
+    /// <summary>兜底链上任一图片可用（false 时显示首字渐变）。</summary>
+    [JsonIgnore]
+    public bool HasPosterDisplay => !string.IsNullOrEmpty(PosterDisplayFile);
+    /// <summary>卡片日期：2026/10/06（未完结→空串）。</summary>
+    [JsonIgnore]
+    public string CompletedDateText => IsCompleted ? CompletedAt.ToString("yyyy/MM/dd") : "";
+    /// <summary>详情页按钮短日期：10/6。</summary>
+    [JsonIgnore]
+    public string CompletedShortText => IsCompleted ? CompletedAt.ToString("M/d") : "";
+    /// <summary>悬停完整文案：2026年10月6日完结。</summary>
+    [JsonIgnore]
+    public string CompletedFullText => IsCompleted ? $"{CompletedAt:yyyy}年{CompletedAt.Month}月{CompletedAt.Day}日完结" : "";
+    /// <summary>月份分组键：2026-10。</summary>
+    [JsonIgnore]
+    public string CompletedMonthKey => IsCompleted ? CompletedAt.ToString("yyyy-MM") : "";
     [JsonIgnore]
     public bool HasBackups => Backups.Count > 0;
     /// <summary>详情页备份区可见性：当前玩家有没有备份（未启用玩家时等同 HasBackups）。</summary>
@@ -373,6 +434,15 @@ public class GameEntry : INotifyPropertyChanged
         OnPropertyChanged(nameof(BackupCountText));
         OnPropertyChanged(nameof(HasIcon));
         OnPropertyChanged(nameof(HasCover));
+        OnPropertyChanged(nameof(IsCompleted));
+        OnPropertyChanged(nameof(HasPoster));
+        OnPropertyChanged(nameof(HasCustomPoster));
+        OnPropertyChanged(nameof(PosterDisplayFile));
+        OnPropertyChanged(nameof(HasPosterDisplay));
+        OnPropertyChanged(nameof(CompletedDateText));
+        OnPropertyChanged(nameof(CompletedShortText));
+        OnPropertyChanged(nameof(CompletedFullText));
+        OnPropertyChanged(nameof(CompletedMonthKey));
         OnPropertyChanged(nameof(DisplayName));
         OnPropertyChanged(nameof(SubName));
         OnPropertyChanged(nameof(Letter));

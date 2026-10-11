@@ -136,41 +136,171 @@ public static class SteamApi
     }
 
     /// <summary>下载官方头图到本地缓存。</summary>
-    public static async Task<bool> DownloadCover(int appId, string saveTo)
+    public static Task<bool> DownloadCover(int appId, string saveTo)
+        => DownloadAppImage(appId, "header.jpg", saveTo);
+
+    /// <summary>下载完结馆竖版海报（Steam 库新图 600×900，2:3）。部分老游戏/锁区无此图，返回 false 由调用方占位兜底。</summary>
+    public static Task<bool> DownloadPoster(int appId, string saveTo)
+        => DownloadAppImage(appId, "library_600x900.jpg", saveTo);
+
+    /// <summary>
+    /// 从 Steam CDN 下载 app 图片，两级兜底：
+    /// ① 老固定路径 cdn.*/steam/apps/{appid}/library_600x900.jpg（2022 年前发售的游戏）；
+    /// ② 新哈希图床——新发售游戏资产在 store_item_assets/steam/apps/{appid}/{sha1}/library_capsule[_schinese].jpg，
+    ///    哈希目录取自免 key 的 IStoreBrowseService/GetItems（include_assets）。
+    /// 每个主机首次失败刷新代理重试一次。
+    /// </summary>
+    private static async Task<bool> DownloadAppImage(int appId, string fileName, string saveTo)
     {
         if (appId <= 0) return false;
+
+        // ⓪ 本地缓存已有效（删游戏后重新入库、重复扫描等）：零网络直接复用，慢网/断网也不挡 UI
         try
         {
-            var urls = new[]
+            if (File.Exists(saveTo) && new FileInfo(saveTo).Length > 1000) return true;
+        }
+        catch { /* 文件被占用等：落到正常下载流程 */ }
+
+        // ① 老固定路径（第三个主机 SNI 不含 steamstatic，国内无加速器时通常仍可达；新游戏该桶无资产，404 即转②）
+        var legacyUrls = new[]
+        {
+            $"https://cdn.cloudflare.steamstatic.com/steam/apps/{appId}/{fileName}",
+            $"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/{fileName}",
+            $"https://steamcdn-a.akamaihd.net/steam/apps/{appId}/{fileName}",
+        };
+        foreach (var url in legacyUrls)
+        {
+            if (await TryDownloadUrl(url, saveTo)) return true;
+        }
+
+        // ② 新哈希图床（2026 年前后新发售游戏，老路径 404）
+        var assets = await FetchStoreAssetsAsync(appId);
+        string? rel = fileName switch
+        {
+            "library_600x900.jpg" => string.IsNullOrEmpty(assets?.LibraryCapsule) ? null : assets.LibraryCapsule,
+            "header.jpg"          => string.IsNullOrEmpty(assets?.Header)         ? null : assets.Header,
+            _ => null,
+        };
+        if (rel is null) return false;
+
+        // asset_url_format 形如 steam/apps/{appid}/${FILENAME}?t=…，映射到 store_item_assets 前缀；四主机轮试
+        var newUrls = new[]
+        {
+            $"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{appId}/{rel}",
+            $"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appId}/{rel}",
+            $"https://cdn.cloudflare.steamstatic.com/store_item_assets/steam/apps/{appId}/{rel}",
+            $"https://cdn.akamai.steamstatic.com/store_item_assets/steam/apps/{appId}/{rel}",
+        };
+        foreach (var url in newUrls)
+        {
+            if (await TryDownloadUrl(url, saveTo)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>下载单个 URL：每主机首次失败刷新系统代理后重试一次；HTTP 404 等最终失败返回 false。</summary>
+    private static async Task<bool> TryDownloadUrl(string url, string saveTo)
+    {
+        for (int attempt = 1; attempt <= 2; attempt++)
+        {
+            try
             {
-                $"https://cdn.cloudflare.steamstatic.com/steam/apps/{appId}/header.jpg",
-                $"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg",
-            };
-            foreach (var url in urls)
-            {
-                for (int attempt = 1; attempt <= 2; attempt++)
+                var bytes = await _http.GetByteArrayAsync(url);
+                if (bytes.Length > 1000)
                 {
-                    try
+                    Directory.CreateDirectory(Path.GetDirectoryName(saveTo)!);
+                    await File.WriteAllBytesAsync(saveTo, bytes);
+                    return true;
+                }
+            }
+            catch when (attempt == 1)
+            {
+                ResetHttpClient();   // 同步中文名同款优化：刷新代理后重试一次
+                await Task.Delay(400);
+            }
+            catch { }
+        }
+        return false;
+    }
+
+    /// <summary>新图床商店资产（相对路径，拼到 store_item_assets 主机下）。</summary>
+    private sealed class StoreAssets
+    {
+        public string LibraryCapsule { get; init; } = "";   // 竖海报 library_capsule[_schinese].jpg（600×900）
+        public string Header { get; init; } = "";           // 横封 header[_schinese].jpg（460×215）
+    }
+
+    private static readonly Dictionary<int, StoreAssets?> StoreAssetsCache = new();
+    /// <summary>负缓存（请求失败/无资产）的记录时刻：配 StoreAssetsCache 中的 null 值做 TTL，
+    /// 避免老游戏/锁区游戏每次补海报都重打一次必失败的接口；过期（10 分钟）或重启后允许再试。</summary>
+    private static readonly Dictionary<int, DateTime> StoreAssetsFailedAt = new();
+    private const int StoreAssetsFailTtlMinutes = 10;
+    private static readonly JsonSerializerOptions CamelJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    /// <summary>
+    /// 查商店资产哈希目录（免 key、匿名可用）：IStoreBrowseService/GetItems?include_assets。
+    /// 请求 schinese：有中文美术版自动给 library_capsule_schinese.jpg，没有则回退默认 library_capsule.jpg。
+    /// 成功结果进程内缓存（同一游戏补海报/横封不重复请求）；失败/无资产走 10 分钟 TTL 负缓存。
+    /// </summary>
+    private static async Task<StoreAssets?> FetchStoreAssetsAsync(int appId)
+    {
+        lock (StoreAssetsCache)
+        {
+            if (StoreAssetsCache.TryGetValue(appId, out var hit))
+            {
+                if (hit != null) return hit;   // 正缓存
+                if (StoreAssetsFailedAt.TryGetValue(appId, out var failedAt)
+                    && (DateTime.UtcNow - failedAt).TotalMinutes < StoreAssetsFailTtlMinutes)
+                    return null;               // 负缓存 TTL 内：零网络直接失败
+                StoreAssetsCache.Remove(appId);   // 负缓存过期：清掉重新请求
+                StoreAssetsFailedAt.Remove(appId);
+            }
+        }
+        try
+        {
+            var input = JsonSerializer.Serialize(new
+            {
+                ids = new[] { new { appid = appId } },
+                context = new { country_code = "HK", language = "schinese" },
+                data_request = new { include_assets = true },
+            }, CamelJson);
+            var url = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?format=json&input_json="
+                      + Uri.EscapeDataString(input);
+
+            using var doc = JsonDocument.Parse(await _http.GetStringAsync(url));
+            if (doc.RootElement.TryGetProperty("response", out var resp) &&
+                resp.TryGetProperty("store_items", out var items) && items.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("appid", out var id) || id.GetInt32() != appId) continue;
+                    if (!item.TryGetProperty("assets", out var a) || a.ValueKind != JsonValueKind.Object) continue;
+
+                    string? lib = a.TryGetProperty("library_capsule", out var lc) && lc.ValueKind == JsonValueKind.String
+                        ? lc.GetString() : null;
+                    string? hdr = a.TryGetProperty("header", out var h) && h.ValueKind == JsonValueKind.String
+                        ? h.GetString() : null;
+                    if (!string.IsNullOrEmpty(lib) || !string.IsNullOrEmpty(hdr))
                     {
-                        var bytes = await _http.GetByteArrayAsync(url);
-                        if (bytes.Length > 1000)
+                        var info = new StoreAssets { LibraryCapsule = lib ?? "", Header = hdr ?? "" };
+                        lock (StoreAssetsCache)
                         {
-                            Directory.CreateDirectory(Path.GetDirectoryName(saveTo)!);
-                            await File.WriteAllBytesAsync(saveTo, bytes);
-                            return true;
+                            StoreAssetsCache[appId] = info;
+                            StoreAssetsFailedAt.Remove(appId);
                         }
+                        return info;
                     }
-                    catch when (attempt == 1)
-                    {
-                        ResetHttpClient();   // 同步中文名同款优化：刷新代理后重试一次
-                        await Task.Delay(400);
-                    }
-                    catch { }
                 }
             }
         }
         catch { }
-        return false;
+        // 请求失败或该 app 无资产：负缓存 10 分钟，期间同 app 补海报/横封不再重打必失败的请求
+        lock (StoreAssetsCache)
+        {
+            StoreAssetsCache[appId] = null;
+            StoreAssetsFailedAt[appId] = DateTime.UtcNow;
+        }
+        return null;
     }
 
     /// <summary>store 搜索熔断：国内无加速器时 store.steampowered.com 直连超时，

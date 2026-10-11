@@ -122,4 +122,16 @@ public static class FolderScanner
         }
         return best;
     }
+
+    /// <summary>手动指定单个 exe → 候选（名称取版本资源 ProductName，缺失用文件名）。
+    /// 用户显式指定，不做大小/启动器黑名单过滤。</summary>
+    public static FolderGameCandidate CandidateFromExe(string exe)
+    {
+        string product = "";
+        try { product = FileVersionInfo.GetVersionInfo(exe).ProductName ?? ""; }
+        catch { }
+        return new FolderGameCandidate(exe,
+            Path.GetDirectoryName(exe) ?? "",
+            string.IsNullOrWhiteSpace(product) ? Path.GetFileNameWithoutExtension(exe) : product.Trim());
+    }
 }

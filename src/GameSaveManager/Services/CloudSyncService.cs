@@ -136,7 +136,8 @@ public static class CloudSyncService
             bool canPersist = Store.SettingsConfidence != SettingsLoadConfidence.Defaulted;
             if (Store.Settings.CloudEnabled)
             {
-                foreach (var g in Store.Games) g.CloudAuto = true;
+                foreach (var g in Store.Games)
+                    if (!g.Archived) g.CloudAuto = true;   // 归档条目不参与自动云同步
                 Store.Save();
             }
             Store.Settings.CloudPerGameMigrated = true;
@@ -183,7 +184,7 @@ public static class CloudSyncService
         if (!Configured) return;
         foreach (var g in Store.Games)
         {
-            if (!g.CloudAuto) continue;
+            if (g.Archived || !g.CloudAuto) continue;
             foreach (var b in g.Backups)
                 if (!string.IsNullOrEmpty(b.File))
                     Enqueue(b.File, g.DisplayName, b.Profile ?? "", CloudIndex.BuildFor(b));
@@ -201,7 +202,7 @@ public static class CloudSyncService
             var expected = new Dictionary<string, CloudIndex.Entry>(StringComparer.OrdinalIgnoreCase);
             foreach (var g in Store.Games)
             {
-                if (!g.CloudAuto) continue;
+                if (g.Archived || !g.CloudAuto) continue;
                 foreach (var b in g.Backups)
                 {
                     if (string.IsNullOrEmpty(b.File)) continue;
@@ -424,9 +425,12 @@ public static class CloudSyncService
 
         var jobs = new List<Job>();
         foreach (var g in Store.Games)
+        {
+            if (g.Archived) continue;   // 批量上传只传在库游戏
             foreach (var b in g.Backups)
                 if (!string.IsNullOrEmpty(b.File))
                     jobs.Add(new Job(b.File, g.DisplayName, b.Profile ?? "", CloudIndex.BuildFor(b)));
+        }
 
         int i = 0;
         foreach (var job in jobs)
@@ -478,7 +482,7 @@ public static class CloudSyncService
         foreach (var g in Store.Games.ToList())
         {
             if (stopCt.IsCancellationRequested) return;
-            if (!g.CloudAuto) continue;
+            if (g.Archived || !g.CloudAuto) continue;
             try
             {
                 var (b, p) = await CollectGameAsync(g, ct: stopCt);

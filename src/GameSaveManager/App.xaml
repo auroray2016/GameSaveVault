@@ -79,11 +79,85 @@
                 </Setter>
             </Style>
 
+            <!-- 沉浸式 UU 风主按钮：深色下青绿渐变+辉光（▶运行游戏）；
+                 浅色主题 UuRunBrush=常态宝蓝、辉光透明，外观等同 BtnPrimary。 -->
+            <Style x:Key="BtnUuTeal" TargetType="Button" BasedOn="{StaticResource Btn}">
+                <Setter Property="Background" Value="{DynamicResource UuRunBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource UuOnTeal}"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="{DynamicResource UuTealGlowColor}"
+                                                      BlurRadius="14" ShadowDepth="0" Opacity="0.65"/>
+                                </Border.Effect>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource UuTealHi}"/>
+                                    <Setter TargetName="bd" Property="Effect">
+                                        <Setter.Value>
+                                            <DropShadowEffect Color="{DynamicResource UuTealGlowColor}"
+                                                              BlurRadius="22" ShadowDepth="0" Opacity="0.9"/>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="BtnSm" TargetType="Button" BasedOn="{StaticResource Btn}">
                 <Setter Property="Padding" Value="10,3"/>
                 <Setter Property="FontSize" Value="11.5"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            </Style>
+
+            <!-- 横幅小按钮：详情页封面底部恒叠 #EE000000 黑色压暗遮罩（与主题无关的暗底），
+                 普通 BtnSm 的 TextSecondary 在浅色主题下是为白底设计的深灰，压黑遮罩会糊。
+                 故文字/描边/底色全部固定半透明白，三套主题通用，不绑主题语义色。 -->
+            <Style x:Key="BtnSmOnHero" TargetType="Button" BasedOn="{StaticResource Btn}">
+                <Setter Property="Padding" Value="10,3"/>
+                <Setter Property="FontSize" Value="11.5"/>
+                <Setter Property="Background" Value="#22FFFFFF"/>
+                <Setter Property="Foreground" Value="#EDF1F8"/>
+                <Setter Property="BorderBrush" Value="#5CFFFFFF"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#42FFFFFF"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="#D9FFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
 
             <!-- 危险/中断操作按钮（实心）：更新数据库的「停止更新」等需要一眼锁定的场景 -->

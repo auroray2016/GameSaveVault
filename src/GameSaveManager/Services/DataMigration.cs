@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows.Media.Imaging;
 using GameSaveManager.Models;
 
 namespace GameSaveManager.Services;
@@ -116,5 +117,100 @@ public static class DataMigration
         var n = name.ToLowerInvariant();
         return n.Contains("ali213") || n.Contains("launcher")
             || n.Contains("开始游戏") || n.Contains("bootstrap");
+    }
+
+    /// <summary>任意 WIC 可读图片（jpg/png/webp/bmp…）转码为 JPEG。
+    /// 走文件流解码而非 UriSource：源路径含 # 等 URI 保留字符时 Uri 会截断路径导致加载失败；
+    /// OnLoad 解码完立即释放源文件句柄。</summary>
+    public static void EncodeJpeg(string src, string dst, int quality = 90)
+    {
+        var bmp = new BitmapImage();
+        using (var fs = File.OpenRead(src))
+        {
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.StreamSource = fs;
+            bmp.EndInit();
+            bmp.Freeze();
+        }
+        var encoder = new JpegBitmapEncoder { QualityLevel = quality };
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        using var outFs = File.Create(dst);
+        encoder.Save(outFs);
+    }
+
+    /// <summary>启动专用包装：大图 WIC 转码丢后台 STA 线程，避免冷启动卡 UI（WIC 转码不保证支持 MTA）。
+    /// 仅写字段/删缓存文件（标量属性通知 WPF 自动封送回 UI 线程），无集合变更，可安全后台执行。</summary>
+    public static Task<List<string>> NormalizeCustomCoversAsync()
+    {
+        var tcs = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var th = new Thread(() =>
+        {
+            try { tcs.SetResult(NormalizeCustomCovers()); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        });
+        th.SetApartmentState(ApartmentState.STA);
+        th.IsBackground = true;
+        th.Start();
+        return tcs.Task;
+    }
+
+    /// <summary>手动上传封面的历史命名 custom_{gameId}.* 统一为官方下载同款 {appId}.jpg（幂等）。
+    /// jpg 直接复制；png/webp/bmp 等转码 JPEG（质量 90）。AppId 未知（学习版）的保留原名；
+    /// 目标 {appId}.jpg 已被另一条目引用（双装）时保留 custom_ 私有名，不覆盖共用图。
+    /// 最后清掉 covers 目录里没有任何游戏引用的 custom_* 孤儿。</summary>
+    public static List<string> NormalizeCustomCovers()
+    {
+        var log = new List<string>();
+        bool changed = false;
+
+        foreach (var g in Store.Games)
+        {
+            string cf = g.CoverFile ?? "";
+            if (g.AppId <= 0
+                || !Path.GetFileName(cf).StartsWith("custom_", StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(cf)) continue;
+            try
+            {
+                string dest = Store.CoverFileFor(g.AppId);
+                // 双装：另一条目正占着 {appId}.jpg（且文件在）→ 维持本条目私有图，不能覆盖
+                if (File.Exists(dest) && Store.IsImageReferencedByOthers(dest, g.Id)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                string ext = Path.GetExtension(cf).ToLowerInvariant();
+                if (ext is ".jpg" or ".jpeg")
+                {
+                    File.Copy(cf, dest, overwrite: true);
+                }
+                else
+                {
+                    EncodeJpeg(cf, dest);
+                }
+                g.CoverFile = dest;
+                File.Delete(cf);
+                changed = true;
+                log.Add($"封面改名：{g.DisplayName} → {g.AppId}.jpg");
+            }
+            catch { /* 单张失败不阻塞其他条目 */ }
+        }
+
+        // 清孤儿：covers 下已无任何游戏引用的 custom_*
+        try
+        {
+            if (Directory.Exists(Store.CoversDir))
+            {
+                var referenced = new HashSet<string>(
+                    Store.Games.Select(g => g.CoverFile ?? ""), StringComparer.OrdinalIgnoreCase);
+                foreach (string f in Directory.GetFiles(Store.CoversDir, "custom_*"))
+                {
+                    if (referenced.Contains(f)) continue;
+                    File.Delete(f);
+                    changed = true;
+                }
+            }
+        }
+        catch { }
+
+        if (changed) Store.Save();
+        return log;
     }
 }

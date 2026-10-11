@@ -49,7 +49,7 @@
                 <StackPanel>
                     <TextBlock Text="导入日期" FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
                     <TextBlock Text="{Binding Added}" FontSize="14" Margin="0,4,0,0"
-                               Foreground="{DynamicResource TextPrimary}"/>
+                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Border>
             <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
@@ -70,7 +70,7 @@
                     <TextBlock Text="游玩总时长" FontSize="11"
                                Foreground="{DynamicResource TextSecondary}"/>
                     <TextBlock Text="{Binding Total}" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0"
-                               Foreground="{DynamicResource Accent}"/>
+                               Foreground="{DynamicResource Accent}" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Border>
             <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
@@ -78,8 +78,8 @@
                 <StackPanel>
                     <TextBlock Text="平均每次 · 游玩次数" FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <TextBlock Text="{Binding Average}" FontSize="14"
-                                   Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock Text="{Binding Average}" FontSize="14" MaxWidth="110"
+                                   Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding Count}" FontSize="12" Margin="8,2,0,0"
                                    Foreground="{DynamicResource TextSecondary}"/>
                     </StackPanel>
@@ -90,7 +90,7 @@
                 <StackPanel>
                     <TextBlock Text="近 7 天" FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
                     <TextBlock Text="{Binding Week7}" FontSize="14" Margin="0,4,0,0"
-                               Foreground="{DynamicResource TextPrimary}"/>
+                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Border>
             <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource BorderBrush}"
@@ -98,7 +98,7 @@
                 <StackPanel>
                     <TextBlock Text="近 30 天" FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
                     <TextBlock Text="{Binding Week30}" FontSize="14" Margin="0,4,0,0"
-                               Foreground="{DynamicResource TextPrimary}"/>
+                               Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Border>
         </UniformGrid>

@@ -1639,13 +1639,15 @@ public static class BackupService
     public static List<OrphanBackupInfo> ListOrphans()
     {
         var result = new List<OrphanBackupInfo>();
-        var gameNames = Store.Games
+        // 归档条目（删库留档的完结游戏）视同已移除：其残留备份仍要在「未关联备份」窗口可见可删
+        var liveGames = Store.Games.Where(g => !g.Archived).ToList();
+        var gameNames = liveGames
             .Select(g => SafeName(g.DisplayName))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var gameIds = Store.Games.Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gameIds = liveGames.Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // 备份记录实际指向的顶层目录（游戏反查到中文名后，旧英文名目录仍承载在库备份，不得当残留删）
         var usedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var g in Store.Games)
+        foreach (var g in liveGames)
             foreach (var b in g.Backups)
             {
                 try
@@ -1729,6 +1731,49 @@ public static class BackupService
         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("只能删除备份目录内的残留数据");
         Directory.Delete(full, recursive: true);
+        PruneRecordsUnder(full);
+    }
+
+    /// <summary>残留目录删完后，清掉条目上指向该目录、文件已不存在的死备份记录。
+    /// 主要场景：归档留档（删库留完结档案）游戏的备份被用户在「未关联备份」窗口删掉，
+    /// 条目上的 Backups 不会自愈，复活后详情页会出现点不动的幽灵行。
+    /// 同步摘掉指向死包的「心目中的存档」指针、写入云同步防复活黑名单并落盘。</summary>
+    private static void PruneRecordsUnder(string deletedDir)
+    {
+        string prefix = deletedDir + Path.DirectorySeparatorChar;
+        bool changed = false;
+        foreach (var g in Store.Games)
+        {
+            var dead = g.Backups.Where(b =>
+            {
+                if (string.IsNullOrEmpty(b.File) || File.Exists(b.File)) return false;
+                try { return Path.GetFullPath(b.File).StartsWith(prefix, StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            }).ToList();
+            if (dead.Count == 0) continue;
+
+            var deadFiles = dead.Select(b => b.File).ToList();
+            foreach (var b in dead) g.Backups.Remove(b);
+            // 指针包已随残留删除：即时摘掉 SwitchAnchors（ProfileService 也会自愈，这里避免复活瞬间错锚）
+            if (g.SwitchAnchors is { Count: > 0 })
+            {
+                foreach (var key in g.SwitchAnchors
+                    .Where(kv => deadFiles.Any(f => string.Equals(
+                        BackupRecord.ResolveFile(kv.Value ?? ""), f, StringComparison.OrdinalIgnoreCase)))
+                    .Select(kv => kv.Key).ToList())
+                {
+                    g.SwitchAnchors.Remove(key);
+                    g.FavoriteWhy?.Remove(key);
+                }
+            }
+            // 用户主动删残留=不再需要：云端同份 zip 进防自动下载黑名单，避免自动收集给复活游戏下回来
+            CloudSyncService.OnLocalBackupsDeleted(g, deadFiles);
+            g.RefreshVisibleBackups();
+            g.RefreshProfiles();
+            g.Refresh();
+            changed = true;
+        }
+        if (changed) Store.Save();
     }
 
     public static string FormatBytes(long b)
