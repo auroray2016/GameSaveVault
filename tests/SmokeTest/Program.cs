@@ -6556,7 +6556,7 @@ else
             && !xaml60.Contains("CompletedCountBadge")
             && !xaml60.Contains("CompletedCountText"), "");
         Check("完结馆: 覆盖层视图/返回/副标题/空状态/卡片宿主齐全",
-            xaml60.Contains("<Border x:Name=\"CompletedView\" Grid.Row=\"1\"")
+            xaml60.Contains("<Border x:Name=\"CompletedView\" Grid.Row=\"2\"")
             && xaml60.Contains("x:Name=\"BtnCompletedBack\"")
             && xaml60.Contains("Click=\"OnCloseCompleted\"")
             && xaml60.Contains("x:Name=\"CompletedSummary\"")
@@ -6969,20 +6969,39 @@ else
             && winCs60.Contains("_immersiveRoots")
             && winCs60.Contains("OnImmersiveRootUnloaded"), "");
         Check("沉浸式: 详情/完结馆/完结回顾三处接入沉浸底，运行键走青绿样式",
-            xaml60.Contains("x:Name=\"CompletedView\" Grid.Row=\"1\" Background=\"{DynamicResource UuBackdropBrush}\"")
+            xaml60.Contains("x:Name=\"CompletedView\" Grid.Row=\"2\" Background=\"{DynamicResource UuHallBackdropBrush}\"")
             && xaml60.Contains("x:Name=\"CompletedDetail\" Grid.Row=\"1\" Background=\"{DynamicResource UuBackdropBrush}\"")
             && xaml60.Contains("Background=\"{DynamicResource UuBackdropBrush}\"")
             && xaml60.Contains("Style=\"{StaticResource BtnUuTeal}\"")
             && xaml60.Contains("x:Name=\"BtnRun\"")
             && xaml60.Contains("x:Name=\"BtnCdRun\""), "");
-        Check("沉浸式: 壁纸三处（主体通铺+完结馆+回顾）清晰不模糊不放大；UuArtOpacity 四处受控",
-            xaml60.Split(new[]{"Source=\"/GameSaveVault;component/Assets/immersive_wallpaper.png\""}, StringSplitOptions.None).Length == 4
+        Check("沉浸式: 壁纸两处（全窗口通铺+完结回顾详情整层覆盖），收藏墙不得内嵌；UuArtOpacity 四处受控",
+            xaml60.Split(new[]{"Source=\"/GameSaveVault;component/Assets/immersive_wallpaper.png\""}, StringSplitOptions.None).Length == 3
             && xaml60.Split(new[]{"Opacity=\"{DynamicResource UuArtOpacity}\""}, StringSplitOptions.None).Length == 5
             && !xaml60.Contains("BlurEffect")
             && !xaml60.Contains("ScaleX=\"1.06\"")
             && xaml60.Contains("Background=\"{DynamicResource UuArtVeil}\""), "");
-        Check("沉浸式: 深色列表与右侧协调——主体区通铺壁纸（均匀压暗+辉光跨列），侧栏/空态底色深色全透、浅色不透明",
-            xaml60.Contains("Grid.ColumnSpan=\"4\" Opacity=\"{DynamicResource UuArtOpacity}\"")
+        Check("沉浸式: 完结馆收藏墙全透（专用 UuHallBackdropBrush），完结回顾详情深色不透明渐变（防收藏墙海报透出）",
+            uuDark60.Contains("LinearGradientBrush x:Key=\"UuBackdropBrush\"")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"UuHallBackdropBrush\" Color=\"#00000000\"/>")
+            && uuLight60.Contains("LinearGradientBrush x:Key=\"UuHallBackdropBrush\"")
+            && uuSoft60.Contains("LinearGradientBrush x:Key=\"UuHallBackdropBrush\""), "");
+        Check("沉浸式: ToolTip 使用专用不透明 ToolTipBg/ToolTipBorder，三主题均不透明且 ImmersiveScope 不得覆盖（馆内提示不玻璃化）",
+            xaml60.Contains("Background=\"{DynamicResource ToolTipBg}\"")
+            && xaml60.Contains("BorderBrush=\"{DynamicResource ToolTipBorder}\"")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ToolTipBg\" Color=\"#20242E\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ToolTipBorder\" Color=\"#2A2F3B\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"ToolTipBg\" Color=\"#F4F0E8\"/>")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"ToolTipBg\" Color=\"#EEF1F5\"/>")
+            && !uuScope60.Contains("ToolTipBg")
+            && !uuScope60.Contains("ToolTipBorder"), "");
+        Check("沉浸式: 完结馆全透底色防透出——主体 Grid 命名 MainBody，打开/关闭完结馆对称 Hidden/Visible（保留滚动位置）",
+            xaml60.Contains("<Grid x:Name=\"MainBody\" Grid.Row=\"2\" ClipToBounds=\"True\">")
+            && winCs60.Contains("MainBody.Visibility = Visibility.Hidden;")
+            && winCs60.Contains("MainBody.Visibility = Visibility.Visible;"), "");
+        Check("沉浸式: 壁纸通铺到标题栏与状态栏——RootGrid 跨四行单一艺术层，侧栏/空态/三栏底色深色全透、浅色不透明",
+            xaml60.Contains("Grid.RowSpan=\"4\" Opacity=\"{DynamicResource UuArtOpacity}\"")
+            && !xaml60.Contains("Grid.ColumnSpan=\"4\" Opacity=\"{DynamicResource UuArtOpacity}\"")
             && xaml60.Contains("Background=\"{DynamicResource UuArtVeilFlat}\"")
             && xaml60.Contains("Background=\"{DynamicResource UuArtVeilTop}\"")
             && xaml60.Contains("x:Name=\"SideBar\" Background=\"{DynamicResource SideBarBg}\"")
@@ -6991,17 +7010,74 @@ else
             && xaml60.Contains("VerticalScrollBarVisibility=\"Auto\" Background=\"Transparent\"")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#00000000\"/>")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#00000000\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ChromeBarBg\" Color=\"#00000000\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ChromeBarBorder\" Color=\"#00000000\"/>")
+            && uuDark60.Contains("LinearGradientBrush x:Key=\"UuBackdropBrush\"")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"UuHallBackdropBrush\" Color=\"#00000000\"/>")
+            && uuLight60.Contains("LinearGradientBrush x:Key=\"UuBackdropBrush\"")
+            && uuSoft60.Contains("LinearGradientBrush x:Key=\"UuBackdropBrush\"")
             && uuDark60.Contains("x:Key=\"UuArtVeilFlat\"")
             && uuDark60.Contains("x:Key=\"UuArtVeilTop\"")
             && uuLight60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#FFFFFFFF\"/>")
             && uuLight60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#FFF3EFE6\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"ChromeBarBg\" Color=\"#FFFFFFFF\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"ChromeBarBorder\" Color=\"#FFE2DAC9\"/>")
             && uuLight60.Contains("x:Key=\"UuArtVeilFlat\"")
             && uuSoft60.Contains("<SolidColorBrush x:Key=\"SideBarBg\" Color=\"#FFFFFFFF\"/>")
             && uuSoft60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#FFF4F6F8\"/>")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"ChromeBarBorder\" Color=\"#FFDDE2E9\"/>")
             && uuSoft60.Contains("x:Key=\"UuArtVeilTop\""), "");
+        Check("沉浸式: WindowChrome 自绘标题栏（系统按钮关闭，三颗自绘按钮跟随主题），32+52+28 行高，最大化防裁切",
+            xaml60.Contains("<WindowChrome CaptionHeight=\"32\"")
+            && xaml60.Contains("GlassFrameThickness=\"0,0,0,1\"")
+            && xaml60.Contains("UseAeroCaptionButtons=\"False\"")
+            && xaml60.Contains("x:Name=\"CaptionMinBtn\"")
+            && xaml60.Contains("x:Name=\"CaptionMaxBtn\"")
+            && xaml60.Contains("x:Name=\"CaptionCloseBtn\"")
+            && xaml60.Contains("x:Name=\"CaptionMaxGlyph\"")
+            && xaml60.Contains("WindowChrome.IsHitTestVisibleInChrome\" Value=\"True\"")
+            && xaml60.Contains("Click=\"OnCaptionMinimize\"")
+            && xaml60.Contains("Click=\"OnCaptionToggleMax\"")
+            && xaml60.Contains("Click=\"OnCaptionClose\"")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionGlyph\" Color=\"#F0FFFFFF\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionHoverBg\" Color=\"#2EFFFFFF\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionPressedBg\" Color=\"#40FFFFFF\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionCloseHoverBg\" Color=\"#BFE81123\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"CaptionGlyph\" Color=\"#CC1A1A1A\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"CaptionPressedBg\" Color=\"#26000000\"/>")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"CaptionHoverBg\" Color=\"#1A000000\"/>")
+            && xaml60.Contains("Property=\"IsPressed\"")
+            && xaml60.Contains("Value=\"{DynamicResource CaptionPressedBg}\"")
+            && xaml60.Contains("<RowDefinition Height=\"32\"/>")
+            && xaml60.Contains("<RowDefinition Height=\"52\"/>")
+            && xaml60.Contains("<RowDefinition Height=\"28\"/>")
+            && xaml60.Contains("Text=\"GameSaveVault\" FontSize=\"12\"")
+            && xaml60.Contains("Background=\"{DynamicResource UuChromeScrim}\"")
+            && uuDark60.Contains("<LinearGradientBrush x:Key=\"UuChromeScrim\"")
+            && uuDark60.Contains("<GradientStop Color=\"#A60A1020\" Offset=\"0\"/>")
+            && winCs60.Contains("WindowState.Maximized ? new Thickness(6)")
+            && winCs60.Contains("OnCaptionToggleMax")
+            && winCs60.Contains("\"\\uE923\""), "");
         Check("沉浸式: 未选游戏时空态不得透出详情鬼影（DetailHost Content=null 折叠，紫色占位块不渲染）",
             xaml60.Contains("<Trigger Property=\"Content\" Value=\"{x:Null}\">")
             && xaml60.Contains("<Setter Property=\"Visibility\" Value=\"Collapsed\"/>"), "");
+        Check("沉浸式: 工具栏六颗按钮统一 40% 半透明玻璃样式（含扫描 Steam 不再蓝底；深色透壁纸，浅色=常态不透明零变化，全局 Btn 不被污染）",
+            uuApp60.Contains("<Style x:Key=\"BtnTool\" TargetType=\"Button\">")
+            && uuApp60.Contains("Value=\"{DynamicResource ToolBtnBg}\"")
+            && uuApp60.Contains("Value=\"{DynamicResource ToolBtnHoverBg}\"")
+            && !xaml60.Contains("BtnToolPrimary")
+            && !uuApp60.Contains("BtnToolPrimary")
+            && !uuDark60.Contains("ToolAccentPrimary")
+            && !uuDark60.Contains("ToolAccentHover")
+            && !uuLight60.Contains("ToolAccentPrimary")
+            && !uuSoft60.Contains("ToolAccentPrimary")
+            && (new System.Text.RegularExpressions.Regex(
+                "Style=\"\\{StaticResource BtnTool\\}\"").Matches(xaml60).Count == 6)
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ToolBtnBg\" Color=\"#661E2A52\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ToolBtnBorder\" Color=\"#33FFFFFF\"/>")
+            && uuDark60.Contains("<SolidColorBrush x:Key=\"ToolBtnHoverBg\" Color=\"#9932426E\"/>")
+            && uuLight60.Contains("<SolidColorBrush x:Key=\"ToolBtnBg\" Color=\"#F4F0E8\"/>")
+            && uuSoft60.Contains("<SolidColorBrush x:Key=\"ToolBtnBg\" Color=\"#EEF1F5\"/>"), "");
         Check("沉浸式: 全局主题底色未被改动（只允许局部换肤，Bg 仍是炭黑；侧栏白只来自 SideBarBg 浅色键）",
             uuDark60.Contains("<SolidColorBrush x:Key=\"Bg\" Color=\"#12141A\"/>")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"Panel\" Color=\"#1A1D25\"/>"), "");

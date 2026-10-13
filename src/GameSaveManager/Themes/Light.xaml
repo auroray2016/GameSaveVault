@@ -99,6 +99,14 @@
         <GradientStop Color="{StaticResource UuBgTop}" Offset="0"/>
         <GradientStop Color="{StaticResource UuBgBottom}" Offset="1"/>
     </LinearGradientBrush>
+    <!-- 收藏墙底色：浅色下与 UuBackdropBrush 相同的不透明渐变（零视觉变化） -->
+    <LinearGradientBrush x:Key="UuHallBackdropBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource UuBgTop}" Offset="0"/>
+        <GradientStop Color="{StaticResource UuBgBottom}" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- 悬浮提示专用不透明底色/描边（馆内馆外一致） -->
+    <SolidColorBrush x:Key="ToolTipBg" Color="#F4F0E8"/>
+    <SolidColorBrush x:Key="ToolTipBorder" Color="#E2DAC9"/>
     <RadialGradientBrush x:Key="UuGlowTealBrush">
         <GradientStop Color="#005690EE" Offset="0"/>
         <GradientStop Color="#005690EE" Offset="1"/>
@@ -134,10 +142,27 @@
         <GradientStop Color="#00FFFFFF" Offset="0"/>
         <GradientStop Color="#00FFFFFF" Offset="1"/>
     </LinearGradientBrush>
+    <!-- 标题栏压条在浅色不挂载（艺术层 Opacity=0），仅占位全透 -->
+    <LinearGradientBrush x:Key="UuChromeScrim" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#00FFFFFF" Offset="0"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- 自绘标题按钮：浅色深灰字；悬停半透明黑磨砂底，按下再加深一档；关闭键悬停半透明红 -->
+    <SolidColorBrush x:Key="CaptionGlyph" Color="#CC1A1A1A"/>
+    <SolidColorBrush x:Key="CaptionHoverBg" Color="#1A000000"/>
+    <SolidColorBrush x:Key="CaptionPressedBg" Color="#26000000"/>
+    <SolidColorBrush x:Key="CaptionCloseHoverBg" Color="#BFE81123"/>
+    <!-- 工具栏按钮：浅色壁纸层不挂载，六颗统一为不透明奶油底 -->
+    <SolidColorBrush x:Key="ToolBtnBg" Color="#F4F0E8"/>
+    <SolidColorBrush x:Key="ToolBtnBorder" Color="#E2DAC9"/>
+    <SolidColorBrush x:Key="ToolBtnHoverBg" Color="#E9F1FD"/>
     <!-- 侧栏/空态底色：浅色不透明白，与改造前 Panel 像素一致 -->
     <SolidColorBrush x:Key="SideBarBg" Color="#FFFFFFFF"/>
     <!-- 未选游戏空态：浅色不透明奶油色，与改造前 Bg(#F3EFE6) 像素一致 -->
     <SolidColorBrush x:Key="EmptyStateBg" Color="#FFF3EFE6"/>
+    <!-- 自绘标题栏/工具栏/状态栏：浅色不透明白（=原 Panel），分隔线=原 BorderBrush 色，零变化 -->
+    <SolidColorBrush x:Key="ChromeBarBg" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="ChromeBarBorder" Color="#FFE2DAC9"/>
     <Color x:Key="UuTealGlowColor">#005690EE</Color>
     <SolidColorBrush x:Key="UuTeal" Color="{StaticResource UuTealC}"/>
     <SolidColorBrush x:Key="UuTealHi" Color="{StaticResource UuTealHiC}"/>

@@ -13,6 +13,17 @@
         UseLayoutRounding="True"
         DataContext="{Binding RelativeSource={RelativeSource Self}}">
 
+    <!-- 自绘标题栏：客户区扩展进原生标题栏，三颗按钮自己画（颜色才能跟随主题、
+         系统 DWM 按钮在自绘 Chrome 上深浅不可控）；CaptionHeight=32 区域可拖拽/双击最大化。
+         这样壁纸能从主体区一直铺到窗口最顶端。 -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="32"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
     <Window.Resources>
         <local:BoolToVis x:Key="BoolToVis"/>
         <local:InverseBoolToVis x:Key="InverseBoolToVis"/>
@@ -1232,10 +1243,65 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToolTip">
-                        <Border Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
+                        <Border Background="{DynamicResource ToolTipBg}" BorderBrush="{DynamicResource ToolTipBorder}"
                                 BorderThickness="1" CornerRadius="6" Padding="9,4">
                             <ContentPresenter/>
                         </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 自绘标题栏按钮：46x32 系统尺寸，Segoe MDL2 矢量字形，透明底、悬停轻罩；
+             IsHitTestVisibleInChrome 让按钮在标题拖拽区内仍可点 -->
+        <Style x:Key="CaptionBtn" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="{DynamicResource CaptionGlyph}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Cursor" Value="Arrow"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionHoverBg}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionPressedBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- 关闭键：必须重写模板——基模板悬停时直接给内部 Border 设了 CaptionHoverBg，
+             只在 Style 层改 Background 会被它压过；这里悬停整块半透明红、字形变白，按下加深 -->
+        <Style x:Key="CaptionCloseBtn" TargetType="Button" BasedOn="{StaticResource CaptionBtn}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionCloseHoverBg}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#E0C4251D"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -1249,27 +1315,64 @@
     <Grid>
     <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
+            <RowDefinition Height="32"/>
             <RowDefinition Height="52"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="28"/>
         </Grid.RowDefinitions>
 
+        <!-- 全窗口统一艺术底：壁纸从自绘标题栏一路铺到状态栏（深色显示；浅色 UuArtOpacity=0 整层隐藏）。
+             必须是一张跨四行的 Image：若上下分段，UniformToFill 各自裁切会在工具栏/状态栏边缘露出拼缝 -->
+        <Grid Grid.RowSpan="4" Opacity="{DynamicResource UuArtOpacity}"
+              IsHitTestVisible="False" ClipToBounds="True">
+            <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
+                   Stretch="UniformToFill"/>
+            <Border Background="{DynamicResource UuArtVeilFlat}"/>
+            <Border Background="{DynamicResource UuGlowTealBrush}"/>
+            <Border Background="{DynamicResource UuGlowIndigoBrush}"/>
+        </Grid>
+
+        <!-- 自绘标题栏（32px，最小化/最大化/关闭为右侧三颗自绘按钮）：
+             其余区域即标题拖拽区；深色全透壁纸+顶部渐隐压条，浅色不透明白 -->
+        <Border Grid.Row="0" Background="{DynamicResource ChromeBarBg}">
+            <Grid>
+                <Border Background="{DynamicResource UuChromeScrim}" Opacity="{DynamicResource UuArtOpacity}"
+                        IsHitTestVisible="False"/>
+                <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+                    <Image Source="Assets/app.ico" Width="15" Height="15" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock Text="GameSaveVault" FontSize="12" Margin="9,1,0,0"
+                               Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+                </StackPanel>
+                <!-- 自绘窗口按钮（右起：关闭/最大化/最小化），字形 Segoe MDL2 Assets -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <Button x:Name="CaptionMinBtn" Style="{StaticResource CaptionBtn}" Click="OnCaptionMinimize"
+                            ToolTip="最小化" Content="&#xE921;"/>
+                    <Button x:Name="CaptionMaxBtn" Style="{StaticResource CaptionBtn}" Click="OnCaptionToggleMax"
+                            ToolTip="最大化">
+                        <TextBlock x:Name="CaptionMaxGlyph" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                    </Button>
+                    <Button x:Name="CaptionCloseBtn" Style="{StaticResource CaptionCloseBtn}" Click="OnCaptionClose"
+                            ToolTip="关闭" Content="&#xE8BB;"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- 工具栏 -->
-        <Border Grid.Row="0" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+        <Border Grid.Row="1" Background="{DynamicResource ChromeBarBg}" BorderBrush="{DynamicResource ChromeBarBorder}"
                 BorderThickness="0,0,0,1">
             <Grid Margin="16,0">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="BtnScan" Style="{StaticResource BtnPrimary}" Content="⟳ 扫描 Steam"
+                    <Button x:Name="BtnScan" Style="{StaticResource BtnTool}" Content="⟳ 扫描 Steam"
                             Margin="0,0,10,0" Click="OnScanSteam"/>
-                    <Button Style="{StaticResource Btn}" Content="＋ 添加游戏" Margin="0,0,10,0" Click="OnAddGameWizard"
+                    <Button Style="{StaticResource BtnTool}" Content="＋ 添加游戏" Margin="0,0,10,0" Click="OnAddGameWizard"
                             ToolTip="选择游戏文件夹批量扫描，或手动指定单个游戏 exe"/>
-                    <Button Style="{StaticResource Btn}" Content="☁ 云存档" Margin="0,0,10,0" Click="OnOpenCloudBrowser"
+                    <Button Style="{StaticResource BtnTool}" Content="☁ 云存档" Margin="0,0,10,0" Click="OnOpenCloudBrowser"
                             ToolTip="浏览/下载/删除云端备份（WebDAV：坚果云/NAS 等）"/>
-                    <Button x:Name="BtnCompleted" Style="{StaticResource Btn}" Content="🏆 完结馆" Margin="0,0,10,0"
+                    <Button x:Name="BtnCompleted" Style="{StaticResource BtnTool}" Content="🏆 完结馆" Margin="0,0,10,0"
                             Click="OnOpenCompleted" ToolTip="已通关游戏的海报墙，按完结时间排列"/>
-                    <Button x:Name="BtnMore" Style="{StaticResource Btn}" Content="⋯ 更多" Margin="0,0,10,0"
+                    <Button x:Name="BtnMore" Style="{StaticResource BtnTool}" Content="⋯ 更多" Margin="0,0,10,0"
                             Click="OnMoreMenuClick"/>
-                    <Button Style="{StaticResource Btn}" Content="⚙ 设置" Margin="0,0,10,0" Click="OnOpenSettings"/>
+                    <Button Style="{StaticResource BtnTool}" Content="⚙ 设置" Margin="0,0,10,0" Click="OnOpenSettings"/>
                     <TextBlock x:Name="BusyText" VerticalAlignment="Center" FontSize="12"
                                Foreground="{DynamicResource Accent2}" Visibility="Collapsed" Text="处理中…"/>
                 </StackPanel>
@@ -1321,7 +1424,7 @@
         </Border>
 
         <!-- 主体 -->
-        <Grid Grid.Row="1" ClipToBounds="True">
+        <Grid x:Name="MainBody" Grid.Row="2" ClipToBounds="True">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="SideCol" Width="310" MinWidth="240" MaxWidth="520"/>
                 <ColumnDefinition Width="Auto"/>
@@ -1329,16 +1432,8 @@
                 <ColumnDefinition Width="0"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 主体统一艺术底：深色下列表+详情通铺同一张壁纸（左右连续无拼缝，均匀 60% 压暗，
-                 青/靛辉光横跨全宽）；浅色 UuArtOpacity=0，整层隐藏，外观与改造前一致 -->
-            <Grid Grid.ColumnSpan="4" Opacity="{DynamicResource UuArtOpacity}"
-                  IsHitTestVisible="False" ClipToBounds="True">
-                <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
-                       Stretch="UniformToFill"/>
-                <Border Background="{DynamicResource UuArtVeilFlat}"/>
-                <Border Background="{DynamicResource UuGlowTealBrush}"/>
-                <Border Background="{DynamicResource UuGlowIndigoBrush}"/>
-            </Grid>
+            <!-- 艺术底已上移到 RootGrid 跨四行通铺（标题栏→状态栏），此处不再重复铺，
+                 避免双层 Image 各自裁切产生拼缝、双层 VeilFlat 叠加导致压暗翻倍 -->
 
             <!-- 侧边栏：深色底色全透（SideBarBg），壁纸直透与右侧连成一片；
                  玻璃语义覆盖由 Loaded 仅在深色挂载 ImmersiveScope，浅色为不透明白零变化 -->
@@ -1529,21 +1624,18 @@
             </Grid>
         </Grid>
 
-        <!-- 完结馆：整层覆盖主体区（顶工具栏与状态栏保留）；Esc/返回/点卡片离开 -->
-        <Border x:Name="CompletedView" Grid.Row="1" Background="{DynamicResource UuBackdropBrush}"
+        <!-- 完结馆：整层覆盖主体区（顶工具栏与状态栏保留）；Esc/返回/点卡片离开。
+             收藏墙底色用专用全透键 UuHallBackdropBrush（露通铺壁纸）；
+             完结回顾详情另用不透明的 UuBackdropBrush，两者不可共用 -->
+        <Border x:Name="CompletedView" Grid.Row="2" Background="{DynamicResource UuHallBackdropBrush}"
                 Visibility="Collapsed" Focusable="True" Loaded="OnImmersiveRootLoaded">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <!-- 内嵌背景：全域统一壁纸（原图清晰+深黑蓝压暗；浅色 UuArtOpacity=0 隐藏） -->
-                <Grid Grid.RowSpan="2" Opacity="{DynamicResource UuArtOpacity}"
-                      IsHitTestVisible="False" ClipToBounds="True">
-                    <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
-                           Stretch="UniformToFill"/>
-                    <Border Background="{DynamicResource UuArtVeil}"/>
-                </Grid>
+                <!-- 收藏墙不内嵌壁纸：只露 RootGrid 跨四行的通铺壁纸（主界面主体已隐藏，
+                     不会透出列表，也无双层 UniformToFill 拼缝）；完结回顾详情另起不透明层 -->
                 <!-- 沉浸辉光层（通铺顶栏与收藏墙；浅色主题全透明） -->
                 <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowTealBrush}"/>
                 <Border Grid.RowSpan="2" Background="{DynamicResource UuGlowIndigoBrush}"/>
@@ -1614,7 +1706,9 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <!-- 内嵌背景：全域统一壁纸（原图清晰+深黑蓝压暗）；浅色 UuArtOpacity=0 隐藏 -->
+                        <!-- 内嵌背景：与改动前一致——同款壁纸（UniformToFill）+ Veil 压暗；
+                             详情层 UuBackdropBrush 为不透明渐变，整层盖住收藏墙，下层海报不会透出。
+                             浅色 UuArtOpacity=0 隐藏壁纸，只见不透明浅色渐变 -->
                         <Grid Grid.RowSpan="2" Opacity="{DynamicResource UuArtOpacity}"
                               IsHitTestVisible="False" ClipToBounds="True">
                             <Image Source="/GameSaveVault;component/Assets/immersive_wallpaper.png"
@@ -1965,7 +2059,7 @@
         </Popup>
 
         <!-- 状态栏 -->
-        <Border Grid.Row="2" Background="{DynamicResource Panel}" BorderBrush="{DynamicResource BorderBrush}"
+        <Border Grid.Row="3" Background="{DynamicResource ChromeBarBg}" BorderBrush="{DynamicResource ChromeBarBorder}"
                 BorderThickness="0,1,0,0">
             <Grid Margin="16,0">
                 <TextBlock x:Name="StatusLeft" FontSize="11" Foreground="{DynamicResource TextSecondary}"
@@ -1977,7 +2071,7 @@
 
         <!-- Toast -->
         <!-- 左下角：避开右侧详情区底部操作栏的常驻按钮（退出游戏时备份等） -->
-        <Border x:Name="Toast" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+        <Border x:Name="Toast" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Bottom"
                 Background="{DynamicResource ToastBg}" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
                 CornerRadius="10" Padding="22,11" Margin="14,0,0,46" MaxWidth="340" Opacity="0"
                 IsHitTestVisible="False" Panel.ZIndex="99">

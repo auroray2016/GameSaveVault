@@ -98,11 +98,19 @@
     <Color x:Key="UuArtVeilC">#990A1020</Color>
     <Color x:Key="UuGlowTealC">#13E2C8</Color>
     <Color x:Key="UuGlowIndigoC">#4155A8</Color>
+    <!-- 完结回顾详情底色：深色不透明渐变，整层盖住下层收藏墙，防止海报/月份标题透出 -->
     <LinearGradientBrush x:Key="UuBackdropBrush" StartPoint="0,0" EndPoint="0.15,1">
         <GradientStop Color="{StaticResource UuBgTop}" Offset="0"/>
         <GradientStop Color="{StaticResource UuBgMid}" Offset="0.55"/>
         <GradientStop Color="{StaticResource UuBgBottom}" Offset="1"/>
     </LinearGradientBrush>
+    <!-- 完结馆收藏墙专用底色：深色全透。打开时主界面主体（MainBody）已隐藏，
+         透出的只有 RootGrid 跨四行的通铺壁纸；浅色主题为不透明渐变，零变化 -->
+    <SolidColorBrush x:Key="UuHallBackdropBrush" Color="#00000000"/>
+    <!-- 悬浮提示专用底色/描边：不透明，且键名不在 ImmersiveScope 玻璃覆盖字典中，
+         保证馆内/馆外 ToolTip 都是实底，不跟随 Panel2 变 40% 透明 -->
+    <SolidColorBrush x:Key="ToolTipBg" Color="#20242E"/>
+    <SolidColorBrush x:Key="ToolTipBorder" Color="#2A2F3B"/>
     <RadialGradientBrush x:Key="UuGlowTealBrush" Center="0.12,0.05" GradientOrigin="0.18,0.02"
                          RadiusX="0.75" RadiusY="0.6">
         <GradientStop Color="#1813E2C8" Offset="0"/>
@@ -122,7 +130,7 @@
     <Color x:Key="UuTextC">#EDEFF8</Color>
     <Color x:Key="UuText2C">#8D97BE</Color>
     <!-- 压暗遮罩：顶部 14% 从近黑过渡到 60%，消除横幅与艺术底的硬接缝；向下保持背景清晰。
-         完结馆/完结回顾自带整层壁纸，直接使用本渐变 -->
+         完结回顾详情自带整层壁纸，直接使用本渐变 -->
     <LinearGradientBrush x:Key="UuArtVeil" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#F50A1020" Offset="0"/>
         <GradientStop Color="{StaticResource UuArtVeilC}" Offset="0.14"/>
@@ -141,6 +149,25 @@
     <SolidColorBrush x:Key="SideBarBg" Color="#00000000"/>
     <!-- 未选游戏空态：深色同样全透（壁纸左右连续，中间玻璃卡浮于壁纸上） -->
     <SolidColorBrush x:Key="EmptyStateBg" Color="#00000000"/>
+    <!-- 自绘标题栏/工具栏/状态栏：深色全透，让通铺壁纸铺到窗口上下边缘；分隔线也隐去 -->
+    <SolidColorBrush x:Key="ChromeBarBg" Color="#00000000"/>
+    <SolidColorBrush x:Key="ChromeBarBorder" Color="#00000000"/>
+    <!-- 标题栏顶部压条：壁纸顶端偏亮，叠一道自上向下渐隐的深蓝压条，
+         保证窗口标题与自绘最小化/关闭按钮清晰，底部归零与主体 Flat 压暗无缝相接 -->
+    <LinearGradientBrush x:Key="UuChromeScrim" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#A60A1020" Offset="0"/>
+        <GradientStop Color="#000A1020" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- 自绘标题按钮：深色白字；悬停半透明白磨砂底，按下再加深一档；关闭键悬停半透明红 -->
+    <SolidColorBrush x:Key="CaptionGlyph" Color="#F0FFFFFF"/>
+    <SolidColorBrush x:Key="CaptionHoverBg" Color="#2EFFFFFF"/>
+    <SolidColorBrush x:Key="CaptionPressedBg" Color="#40FFFFFF"/>
+    <SolidColorBrush x:Key="CaptionCloseHoverBg" Color="#BFE81123"/>
+    <!-- 工具栏玻璃按钮：深蓝 40% 半透明胶囊透出壁纸，细白玻璃描边；悬停加亮到 60%。
+         六颗按钮统一样式（含扫描 Steam，不再有蓝色主操作底） -->
+    <SolidColorBrush x:Key="ToolBtnBg" Color="#661E2A52"/>
+    <SolidColorBrush x:Key="ToolBtnBorder" Color="#33FFFFFF"/>
+    <SolidColorBrush x:Key="ToolBtnHoverBg" Color="#9932426E"/>
     <SolidColorBrush x:Key="UuPanel" Color="{StaticResource UuPanelC}"/>
     <SolidColorBrush x:Key="UuPanel2" Color="{StaticResource UuPanel2C}"/>
     <SolidColorBrush x:Key="UuInnerBg" Color="{StaticResource UuInnerBgC}"/>

@@ -96,6 +96,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ThemeManager.ThemeChanged += RefreshImmersiveScopes;
         Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeButton;
         Closed += (_, _) => ThemeManager.ThemeChanged -= RefreshImmersiveScopes;
+        // WindowChrome 最大化时窗口会超出屏幕一个 ResizeBorderThickness（6 DIP），
+        // 给 RootGrid 加等宽 Margin 防止壁纸与图标被屏幕边缘裁掉；还原时归零。
+        StateChanged += (_, _) =>
+        {
+            RootGrid.Margin = WindowState == WindowState.Maximized ? new Thickness(6) : new Thickness(0);
+            // 自绘最大化键：最大化后显示「还原」字形（Segoe MDL2：E922 方框 / E923 双方框）
+            CaptionMaxGlyph.Text = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
+            CaptionMaxBtn.ToolTip = WindowState == WindowState.Maximized ? "向下还原" : "最大化";
+        };
         // Store.Init 已在 App.OnStartup 中完成（窗口创建前）；此处重复调用会导致整轮加载/快照重跑
         // 存盘失败必须让用户看见（否则界面显示成功、重启后记录消失）
         Store.SaveFailed += msg => Dispatcher.BeginInvoke(() => ShowToast(msg, true));
@@ -1452,6 +1461,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OpenCompleted()
     {
         BuildCompletedHost();
+        // 完结馆深色底色全透（只留通铺壁纸），必须同时藏起主界面主体，否则游戏列表会透出来。
+        // 用 Hidden 而非 Collapsed：保留布局与列表滚动位置，关闭后原样恢复。
+        MainBody.Visibility = Visibility.Hidden;
         CompletedView.Visibility = Visibility.Visible;
         PreviewKeyDown += OnCompletedViewKeyDown;
         BtnCompletedBack.Focus();
@@ -1464,6 +1476,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CompletedDatePopup.IsOpen = false;
         CloseCompletedDetail();
         CompletedView.Visibility = Visibility.Collapsed;
+        MainBody.Visibility = Visibility.Visible;
         PreviewKeyDown -= OnCompletedViewKeyDown;
     }
 
@@ -2935,6 +2948,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateThemeChips();
         ThemePopup.IsOpen = !ThemePopup.IsOpen;
     }
+
+    // 自绘标题栏三颗按钮：行为与系统按钮一致（最小化/最大化切换/关闭走正常 Close 流程）
+    private void OnCaptionMinimize(object sender, RoutedEventArgs e)
+        => WindowState = WindowState.Minimized;
+
+    private void OnCaptionToggleMax(object sender, RoutedEventArgs e)
+        => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void OnCaptionClose(object sender, RoutedEventArgs e) => Close();
 
     private void OnThemePopupChecked(object s, RoutedEventArgs e)
     {

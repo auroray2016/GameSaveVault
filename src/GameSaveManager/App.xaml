@@ -79,6 +79,43 @@
                 </Setter>
             </Style>
 
+            <!-- 工具栏玻璃按钮（仅主窗口工具栏使用）：深色半透明透出壁纸，
+                 浅色键值=常态色，外观与 Btn 像素一致。模板与 Btn 同构，仅换色键。 -->
+            <Style x:Key="BtnTool" TargetType="Button">
+                <Setter Property="Background" Value="{DynamicResource ToolBtnBg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource ToolBtnBorder}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="14,6"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource ToolBtnHoverBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- 沉浸式 UU 风主按钮：深色下青绿渐变+辉光（▶运行游戏）；
                  浅色主题 UuRunBrush=常态宝蓝、辉光透明，外观等同 BtnPrimary。 -->
             <Style x:Key="BtnUuTeal" TargetType="Button" BasedOn="{StaticResource Btn}">
