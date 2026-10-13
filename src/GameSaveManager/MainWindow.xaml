@@ -1252,60 +1252,7 @@
             </Setter>
         </Style>
 
-        <!-- 自绘标题栏按钮：46x32 系统尺寸，Segoe MDL2 矢量字形，透明底、悬停轻罩；
-             IsHitTestVisibleInChrome 让按钮在标题拖拽区内仍可点 -->
-        <Style x:Key="CaptionBtn" TargetType="Button">
-            <Setter Property="Width" Value="46"/>
-            <Setter Property="Height" Value="32"/>
-            <Setter Property="Foreground" Value="{DynamicResource CaptionGlyph}"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
-            <Setter Property="FontSize" Value="10"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Cursor" Value="Arrow"/>
-            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionHoverBg}"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionPressedBg}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <!-- 关闭键：必须重写模板——基模板悬停时直接给内部 Border 设了 CaptionHoverBg，
-             只在 Style 层改 Background 会被它压过；这里悬停整块半透明红、字形变白，按下加深 -->
-        <Style x:Key="CaptionCloseBtn" TargetType="Button" BasedOn="{StaticResource CaptionBtn}">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" Background="Transparent">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionCloseHoverBg}"/>
-                                <Setter Property="Foreground" Value="White"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#E0C4251D"/>
-                                <Setter Property="Foreground" Value="White"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <!-- CaptionBtn / CaptionCloseBtn 已提升为 App.xaml 全局样式（主窗口与子窗口 CaptionBar 共用） -->
 
         <!-- 性能：透明分层 Popup 上的 DropShadowEffect 会在首次打开时触发大尺寸软件位图模糊，
              同步阻塞 UI 线程可达 1 秒以上（全屏游戏占用 GPU 时更甚）。浮层改用 1px 描边分层，零 Effect。 -->

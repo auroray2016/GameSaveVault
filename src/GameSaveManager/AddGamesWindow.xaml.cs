@@ -23,6 +23,8 @@ public partial class AddGamesWindow : Window
     public AddGamesWindow()
     {
         InitializeComponent();
+        // 自绘标题栏外仍有 1px DWM 边框，按主题染深浅（与其余子窗口一致）
+        DarkTitleBar.SetTheme(this, ThemeManager.IsDark);
         CandidateList.ItemsSource = _items;
         UpdateSummary();
     }

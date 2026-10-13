@@ -116,6 +116,62 @@
                 </Setter>
             </Style>
 
+            <!-- 自绘标题栏按钮（主窗口 + 全部子窗口 CaptionBar 共用）：46x32 系统尺寸，
+                 Segoe MDL2 矢量字形，透明底、悬停轻罩；
+                 IsHitTestVisibleInChrome 让按钮在标题拖拽区内仍可点 -->
+            <Style x:Key="CaptionBtn" TargetType="Button">
+                <Setter Property="Width" Value="46"/>
+                <Setter Property="Height" Value="32"/>
+                <Setter Property="Foreground" Value="{DynamicResource CaptionGlyph}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+                <Setter Property="FontSize" Value="10"/>
+                <Setter Property="Focusable" Value="False"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+                <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionHoverBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionPressedBg}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <!-- 关闭键：必须重写模板——基模板悬停时直接给内部 Border 设了 CaptionHoverBg，
+                 只在 Style 层改 Background 会被它压过；这里悬停整块半透明红、字形变白，按下加深 -->
+            <Style x:Key="CaptionCloseBtn" TargetType="Button" BasedOn="{StaticResource CaptionBtn}">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource CaptionCloseHoverBg}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#E0C4251D"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- 沉浸式 UU 风主按钮：深色下青绿渐变+辉光（▶运行游戏）；
                  浅色主题 UuRunBrush=常态宝蓝、辉光透明，外观等同 BtnPrimary。 -->
             <Style x:Key="BtnUuTeal" TargetType="Button" BasedOn="{StaticResource Btn}">

@@ -231,7 +231,13 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Grid Margin="20,16">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <local:CaptionBar Grid.Row="0"/>
+        <Grid Grid.Row="1" Margin="20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -330,6 +336,7 @@
                 <Button Style="{StaticResource Btn}" Content="关闭" Width="80"
                         Margin="10,0,0,0" IsCancel="True"/>
             </StackPanel>
+        </Grid>
         </Grid>
     </Grid>
 </Window>

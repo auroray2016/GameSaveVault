@@ -1,6 +1,7 @@
 <Window x:Class="GameSaveManager.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GameSaveManager"
         Title="设置 · GameSaveVault"
         Icon="Assets/app.ico"
         Width="780" Height="660" MinWidth="640" MinHeight="480"
@@ -76,6 +77,12 @@
         </Style>
     </Window.Resources>
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <local:CaptionBar Grid.Row="0"/>
+        <Grid Grid.Row="1">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -631,5 +638,6 @@
                 </StackPanel>
             </Grid>
         </Border>
+        </Grid>
     </Grid>
 </Window>

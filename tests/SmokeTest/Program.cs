@@ -7027,7 +7027,7 @@ else
             && uuSoft60.Contains("<SolidColorBrush x:Key=\"EmptyStateBg\" Color=\"#FFF4F6F8\"/>")
             && uuSoft60.Contains("<SolidColorBrush x:Key=\"ChromeBarBorder\" Color=\"#FFDDE2E9\"/>")
             && uuSoft60.Contains("x:Key=\"UuArtVeilTop\""), "");
-        Check("沉浸式: WindowChrome 自绘标题栏（系统按钮关闭，三颗自绘按钮跟随主题），32+52+28 行高，最大化防裁切",
+        Check("沉浸式: WindowChrome 自绘标题栏（系统按钮关闭，三颗自绘按钮跟随主题），32+52+28 行高，最大化防裁切；CaptionBtn 样式已提升 App.xaml 全局",
             xaml60.Contains("<WindowChrome CaptionHeight=\"32\"")
             && xaml60.Contains("GlassFrameThickness=\"0,0,0,1\"")
             && xaml60.Contains("UseAeroCaptionButtons=\"False\"")
@@ -7035,10 +7035,15 @@ else
             && xaml60.Contains("x:Name=\"CaptionMaxBtn\"")
             && xaml60.Contains("x:Name=\"CaptionCloseBtn\"")
             && xaml60.Contains("x:Name=\"CaptionMaxGlyph\"")
-            && xaml60.Contains("WindowChrome.IsHitTestVisibleInChrome\" Value=\"True\"")
             && xaml60.Contains("Click=\"OnCaptionMinimize\"")
             && xaml60.Contains("Click=\"OnCaptionToggleMax\"")
             && xaml60.Contains("Click=\"OnCaptionClose\"")
+            && uuApp60.Contains("<Style x:Key=\"CaptionBtn\" TargetType=\"Button\">")
+            && uuApp60.Contains("<Style x:Key=\"CaptionCloseBtn\" TargetType=\"Button\" BasedOn=\"{StaticResource CaptionBtn}\">")
+            && uuApp60.Contains("WindowChrome.IsHitTestVisibleInChrome\" Value=\"True\"")
+            && uuApp60.Contains("Value=\"{DynamicResource CaptionPressedBg}\"")
+            && uuApp60.Contains("Value=\"{DynamicResource CaptionCloseHoverBg}\"")
+            && !xaml60.Contains("<Style x:Key=\"CaptionBtn\"")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionGlyph\" Color=\"#F0FFFFFF\"/>")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionHoverBg\" Color=\"#2EFFFFFF\"/>")
             && uuDark60.Contains("<SolidColorBrush x:Key=\"CaptionPressedBg\" Color=\"#40FFFFFF\"/>")
@@ -7046,8 +7051,6 @@ else
             && uuLight60.Contains("<SolidColorBrush x:Key=\"CaptionGlyph\" Color=\"#CC1A1A1A\"/>")
             && uuLight60.Contains("<SolidColorBrush x:Key=\"CaptionPressedBg\" Color=\"#26000000\"/>")
             && uuSoft60.Contains("<SolidColorBrush x:Key=\"CaptionHoverBg\" Color=\"#1A000000\"/>")
-            && xaml60.Contains("Property=\"IsPressed\"")
-            && xaml60.Contains("Value=\"{DynamicResource CaptionPressedBg}\"")
             && xaml60.Contains("<RowDefinition Height=\"32\"/>")
             && xaml60.Contains("<RowDefinition Height=\"52\"/>")
             && xaml60.Contains("<RowDefinition Height=\"28\"/>")
@@ -7058,6 +7061,58 @@ else
             && winCs60.Contains("WindowState.Maximized ? new Thickness(6)")
             && winCs60.Contains("OnCaptionToggleMax")
             && winCs60.Contains("\"\\uE923\""), "");
+
+        // ── 子窗口统一自绘标题栏（方案 B：6 个常用大窗与主窗口同款 CaptionBar） ──
+        string capBarXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "CaptionBar.xaml"));
+        string capBarCs60 = File.ReadAllText(Path.Combine(srcRoot60, "CaptionBar.xaml.cs"));
+        Check("子窗口统一标题栏: 通用 CaptionBar 与主窗口同款（32px、Panel 同色底+1px 分隔线、MDL2 三键、直角 Chrome、最大化补偿、NoResize 自适应）",
+            capBarXaml60.Contains("Height=\"32\"")
+            && capBarXaml60.Contains("Background=\"{DynamicResource Panel}\"")
+            && capBarXaml60.Contains("BorderBrush=\"{DynamicResource BorderBrush}\"")
+            && capBarXaml60.Contains("BorderThickness=\"0,0,0,1\"")
+            && capBarXaml60.Contains("x:Name=\"BtnMin\"")
+            && capBarXaml60.Contains("x:Name=\"BtnMax\"")
+            && capBarXaml60.Contains("x:Name=\"BtnClose\"")
+            && capBarXaml60.Contains("x:Name=\"GlyphMax\"")
+            && capBarXaml60.Contains("Style=\"{StaticResource CaptionBtn}\"")
+            && capBarXaml60.Contains("Style=\"{StaticResource CaptionCloseBtn}\"")
+            && capBarXaml60.Contains("&#xE921;")
+            && capBarXaml60.Contains("&#xE922;")
+            && capBarXaml60.Contains("&#xE8BB;")
+            && capBarCs60.Contains("WindowChrome.SetWindowChrome")
+            && capBarCs60.Contains("CaptionHeight = 32")
+            && capBarCs60.Contains("GlassFrameThickness = new Thickness(0, 0, 0, 1)")
+            && capBarCs60.Contains("CornerRadius = new CornerRadius(0)")
+            && capBarCs60.Contains("UseAeroCaptionButtons = false")
+            && capBarCs60.Contains("ResizeMode.NoResize ? Visibility.Collapsed")
+            && capBarCs60.Contains("ResizeMode.CanResize ? Visibility.Visible")
+            && capBarCs60.Contains("WindowState.Maximized")
+            && capBarCs60.Contains("new Thickness(6)")
+            && capBarCs60.Contains("\"\\uE923\"")
+            && capBarCs60.Contains("_win?.Close()"), "");
+        string[] capWindows60 =
+        {
+            "AddGamesWindow.xaml", "SettingsWindow.xaml", "CloudBrowserWindow.xaml",
+            "EditGameWindow.xaml", "OrphanBackupsWindow.xaml", "PlayStatsWindow.xaml"
+        };
+        foreach (string capFile in capWindows60)
+        {
+            string capText = File.ReadAllText(Path.Combine(srcRoot60, capFile));
+            Check($"子窗口统一标题栏: {capFile} 两行包装并在 Row 0 挂 CaptionBar（不再使用系统原生标题栏）",
+                capText.Contains("xmlns:local=\"clr-namespace:GameSaveManager\"")
+                && capText.Contains("<local:CaptionBar Grid.Row=\"0\"/>")
+                && !capText.Contains("<WindowChrome.WindowChrome>"), capFile);
+        }
+        string editGameXaml60 = File.ReadAllText(Path.Combine(srcRoot60, "EditGameWindow.xaml"));
+        Check("子窗口统一标题栏: 编辑游戏为 NoResize 固定窗（CaptionBar 只显关闭键），补窗口图标；内容超高时行 1 为 * + ScrollViewer 兜底，底部按钮不被裁切",
+            editGameXaml60.Contains("ResizeMode=\"NoResize\"")
+            && editGameXaml60.Contains("Icon=\"Assets/app.ico\"")
+            && editGameXaml60.Contains("<ScrollViewer Grid.Row=\"1\" VerticalScrollBarVisibility=\"Auto\">")
+            && editGameXaml60.Contains("<StackPanel Margin=\"24,20,24,20\">")
+            && editGameXaml60.Contains("<RowDefinition Height=\"*\"/>"), "");
+        string addGamesCs60 = File.ReadAllText(Path.Combine(srcRoot60, "AddGamesWindow.xaml.cs"));
+        Check("子窗口统一标题栏: 添加游戏窗口按主题染 DWM 边框（回归守卫：曾漏调导致深色下白色原生标题栏）",
+            addGamesCs60.Contains("DarkTitleBar.SetTheme(this, ThemeManager.IsDark)"), "");
         Check("沉浸式: 未选游戏时空态不得透出详情鬼影（DetailHost Content=null 折叠，紫色占位块不渲染）",
             xaml60.Contains("<Trigger Property=\"Content\" Value=\"{x:Null}\">")
             && xaml60.Contains("<Setter Property=\"Visibility\" Value=\"Collapsed\"/>"), "");
