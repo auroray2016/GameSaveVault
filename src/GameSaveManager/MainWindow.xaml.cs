@@ -46,6 +46,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private DateTime _lastAutoBackup = DateTime.MinValue;
     /// <summary>运行中定时快照的上次时间（按游戏 Id）。</summary>
     private readonly Dictionary<string, DateTime> _lastHotSnapshot = new();
+    /// <summary>进程连续缺席轮数（按游戏 Id）：退出必须连续 3 轮（约 3 秒）都枚举不到进程才确认，
+    /// 防游戏退出瞬间子进程残留、系统繁忙时整轮进程枚举漏帧造成的单帧误判——误判退出会提前摘掉
+    /// 运行标记且无回头路，导致真正退出时边沿事件消失、退出备份永久漏触发。</summary>
+    private readonly Dictionary<string, int> _missingTicks = new();
+    /// <summary>退出确认所需的连续缺席轮数（监控 1 轮/秒）。</summary>
+    private const int ExitConfirmTicks = 3;
+    /// <summary>回收区上次过期清理的日期：启动清一次，应用长期不重启时跨天再补一次。</summary>
+    private DateTime _lastRecyclePurgeDate = DateTime.Today;
     private int _sortMode = 0;         // 0=最近游玩（默认） 1=名称 2=最近添加
     private bool _sortDirDesc = true;  // true=新→旧 / Z→A
     /// <summary>本次运行已被认领的旧 zip（同名游戏重新入库时防止重复认领）。</summary>
@@ -2651,16 +2659,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetBusy(true);
         try
         {
-            BackupService.Delete(g, r);                                  // 本地删除 + 黑名单兜底
+            BackupService.Delete(g, r, delCloud);                        // 本地移入回收区 + 黑名单兜底
             int cloudDeleted = 0;
             if (delCloud)
                 cloudDeleted = await CloudSyncService.DeleteRemoteCopiesAsync(g, r.File);
             RefreshAfterChange(g);
             ShowToast(delCloud && cloudDeleted > 0
-                ? $"已删除该备份（云端副本已同步删除）"
+                ? $"已移入「最近删除」（云端副本已同步删除，15 天内可在「更多 → 最近删除」还原本机备份）"
                 : cloudCopy
-                    ? "已删除该备份（云端副本已保留，可随时在 ☁ 云端备份中查看）"
-                    : "已删除该备份");
+                    ? "已移入「最近删除」（云端副本已保留，可随时在 ☁ 云端备份中查看）"
+                    : "已移入「最近删除」，15 天内可在「更多 → 最近删除」中还原");
         }
         catch (Exception ex)
         {
@@ -2871,10 +2879,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : "";
         var confirm = MessageBox.Show(this,
             $"删除玩家「{vm.Name}」？\n\n" +
-            $"· 将删除他的全部 {nBak} 份备份（他的进度就存在这些备份里）；\n" +
+            $"· 将移除他的全部 {nBak} 份备份（备份自动进入「最近删除」，15 天内可在「更多 → 最近删除」还原）；\n" +
             activeNote +
-            "· 其他玩家的存档与备份不受影响；\n" +
-            "此操作不可恢复！",
+            "· 其他玩家的存档与备份不受影响；",
             "确认删除玩家", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
@@ -3488,7 +3495,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var confirm = MessageBox.Show(this,
             $"从库中移除「{g.DisplayName}」？\n\n{archiveLine}{sizeLine}" +
             "「是」= 仅从库中移除，备份和玩家档案保留在磁盘上，以后重新添加该游戏会自动找回；\n" +
-            "「否」= 连备份和玩家档案一起彻底删除（不可恢复）；\n" +
+            "「否」= 连备份一起删除（备份自动进入「最近删除」，15 天内可在「更多 → 最近删除」还原，玩家镜像立即清除）；\n" +
             "「取消」= 不做任何操作。",
             "确认移除", MessageBoxButton.YesNoCancel, MessageBoxImage.Question,
             MessageBoxResult.Yes);
@@ -3512,6 +3519,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
             catch (Exception ex) { ShowToast("清理备份数据时出错：" + ex.Message, true); }
             _playOpen.Remove(g.Id);   // 条目移除：进行中的游玩会话不再结算
+            _missingTicks.Remove(g.Id);  // 退出宽限计数同步清理，防止同 GUID 复活后继承旧计数
             if (keepArchive)
             {
                 // 归档：条目保留（完结馆照常展示），列表/监控/备份运营全部跳过
@@ -3567,23 +3575,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally { SetBusy(false); }
     }
 
-    /// <summary>工具栏「⋯ 更多」：低频维护项——未关联备份、更新存档规则。</summary>
+    /// <summary>工具栏「⋯ 更多」：低频维护项——最近删除、未关联备份、更新存档规则。</summary>
     private void OnMoreMenuClick(object s, RoutedEventArgs e)
     {
         if (s is not FrameworkElement btn) return;
         var cm = new ContextMenu();
+        int recycleCount = RecycleService.Count;
+        var miRecycle = new MenuItem
+        {
+            Header = recycleCount > 0 ? $"♻ 最近删除（{recycleCount}）" : "♻ 最近删除",
+        };
+        miRecycle.ToolTip = "最近 15 天删除的备份都在这里，可随时还原";
+        miRecycle.Click += (snd, ev) => OnOpenRecycleBin(snd, ev);
         var miBackup = new MenuItem { Header = "🗂 未关联备份" };
         miBackup.ToolTip = "管理已从库中移除的游戏留下的备份，可找回或删除";
         miBackup.Click += (snd, ev) => OnOpenBackupDir(snd, ev);
         var miWiki = new MenuItem { Header = "🌐 更新存档规则" };
         miWiki.ToolTip = "强制联网更新全部游戏的 Wiki 存档规则与缺失的中文名";
         miWiki.Click += (snd, ev) => OnRefreshAllWiki(snd, ev);
+        cm.Items.Add(miRecycle);
         cm.Items.Add(miBackup);
         cm.Items.Add(miWiki);
         cm.PlacementTarget = btn;
         cm.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         cm.IsOpen = true;
     }
+
+    private void OnOpenRecycleBin(object s, RoutedEventArgs e)
+        => new RecycleBinWindow { Owner = this }.ShowDialog();
 
     private void OnOpenBackupDir(object s, RoutedEventArgs e)
     {
@@ -3616,6 +3635,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void WatchTick(object? s, EventArgs e)
     {
+        // 跨天补一次回收区过期清理（启动已清；长期不关机不关应用时的兜底），失败不影响监控
+        if (DateTime.Today != _lastRecyclePurgeDate)
+        {
+            _lastRecyclePurgeDate = DateTime.Today;
+            _ = Task.Run(() => { try { RecycleService.PurgeExpired(); } catch { } });
+        }
         // 手动备份/还原/玩家操作/扫描进行中：本轮跳过，避免与后台任务并发改集合、互写 zip
         if (_busyDepth > 0) return;
         // 重入保护：上一轮后台枚举还没回来直接跳过（重叠枚举只会成倍放大卡顿）
@@ -3639,7 +3664,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch
         {
-            /* 枚举受限：本轮退化为不识别外部启动游戏，下轮再试；PID 跟踪不受影响 */
+            /* 枚举受限：本轮整轮放弃，所有游戏维持上轮运行状态——不闭合游玩会话、不触发退出备份，
+               绝不能把"没枚举到"当成"已退出"；下轮再试（PID/缺席计数均不变）。 */
             Interlocked.Exchange(ref _watchTickBusy, 0);
             return;
         }
@@ -3650,6 +3676,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             bool running = CheckGameRunningState(g, runningNames);
             if (running)
             {
+                _missingTicks[g.Id] = 0;   // 进程在：缺席计数清零（漏帧/误判恢复后立即回稳）
                 if (!_playOpen.ContainsKey(g.Id))
                 {
                     // 本应用 exe 启动的用精确启动时刻；Steam 协议/外部启动以首次轮询发现为起点（≤1s 误差）
@@ -3669,6 +3696,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     _ = RunGameBackupAsync(g, "运行中快照", hot: true);
                 }
                 continue;
+            }
+            // 本轮未枚举到进程。只对此前确认在运行中的游戏计缺席：本来就没跑的游戏不计数、不折腾
+            if (g.IsRunning || _playOpen.ContainsKey(g.Id) || _launched.ContainsKey(g.Id))
+            {
+                int miss = _missingTicks.TryGetValue(g.Id, out var miss0) ? miss0 + 1 : 1;
+                if (miss < ExitConfirmTicks)
+                {
+                    _missingTicks[g.Id] = miss;
+                    continue;   // 宽限期内维持上轮「运行中」：不翻状态、不闭合会话、不触发退出备份
+                }
+                _missingTicks.Remove(g.Id);
+                _launched.Remove(g.Id);   // 连续缺席满 3 轮才确认退出，注销 PID 跟踪记录
             }
             if (g.IsRunning)
             {
@@ -3694,17 +3733,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally { Interlocked.Exchange(ref _watchTickBusy, 0); }
     }
 
-    /// <summary>游戏运行状态检测：本应用用 exe 启动过的游戏优先认记录的 PID（同名进程不再误判），
-    /// PID 已死即视为退出并清除记录；Steam 协议启动 / 外部启动用本轮进程名快照匹配。
+    /// <summary>游戏运行状态检测（单轮原始信号，不做退出裁决）：本应用用 exe 启动过的游戏认记录的 PID
+    /// （同名进程不再误判）；PID 虽死但同名进程仍在（启动器转交、多进程游戏）也按在运行处理。
+    /// PID 已死且同名进程消失时不立即摘除 _launched——交给 WatchTick 连续缺席宽限满后摘除，
+    /// 单帧漏枚举不会造成"误判退出→真退出无事件"。Steam 协议启动 / 外部启动走进程名快照匹配。
     /// runningNames：WatchTick 每轮只枚举一次的全部进程名。</summary>
     private bool CheckGameRunningState(GameEntry g, HashSet<string> runningNames)
     {
-        if (_launched.TryGetValue(g.Id, out var li))
-        {
-            if (IsPidAlive(li)) return true;
-            _launched.Remove(g.Id);
-            return false;
-        }
+        if (_launched.TryGetValue(g.Id, out var li) && IsPidAlive(li)) return true;
         return !string.IsNullOrEmpty(g.ProcessName) && runningNames.Contains(g.ProcessName);
     }
 
@@ -3727,9 +3763,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (!_autoBusy.Add(g.Id)) return;   // 该游戏已有自动备份在跑
         try { await AutoBackupGate.WaitAsync(); }
         catch { _autoBusy.Remove(g.Id); return; }
-        AppendAutoLog($"「{g.DisplayName}」开始 {note}（{(hot ? "运行中快照" : "退出备份")}）");
+        // 退出备份复查若撞上「游戏其实仍在运行」（监控误判退出）：恢复运行标记，5 秒后重试，最多 3 次；
+        // 3 次后游戏仍在则交还监控——真退出时由连续缺席宽限重新触发，不会再像旧逻辑那样永久漏备份。
+        const int maxAttempts = 3;
         try
         {
+          for (int attempt = 1; attempt <= maxAttempts; attempt++)
+          {
+            string attemptTag = attempt > 1 ? $"（第 {attempt} 次尝试）" : "";
+            AppendAutoLog($"「{g.DisplayName}」开始 {note}（{(hot ? "运行中快照" : "退出备份")}）{attemptTag}");
+            try
+            {
             // 退出自动备份=认可动作（指针移到新包）；运行中热快照不移动指针——游戏还在跑，退出那次才是最终进度
             var r = hot
                 ? await Task.Run(() => BackupService.Create(g, note, hot))
@@ -3741,24 +3785,54 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 RefreshAfterChange(g);
                 ShowToast($"「{g.DisplayName}」{note}完成 {r.SizeText}");
             });
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
-        {
+            break;
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
+            {
             // 无新存档写入：运行中快照静默跳过（时间戳已更新）；退出备份提示一声（原行为）
             AppendAutoLog($"「{g.DisplayName}」跳过 {note}：存档无变化");
             if (!hot)
                 await Dispatcher.InvokeAsync(() => ShowToast($"「{g.DisplayName}」存档无变化，跳过自动备份"));
-        }
-        catch (Exception ex)
-        {
+            break;
+            }
+            catch (InvalidOperationException ex) when (!hot && ex.Message.Contains("游戏正在运行"))
+            {
+            // 监控误判退出：恢复「运行中」全套标记，下一轮监控即可重新跟踪，本方法也按 5 秒节奏重试
+            MarkGameStillRunning(g);
+            if (attempt < maxAttempts)
+            {
+                AppendAutoLog($"「{g.DisplayName}」{note}复查发现游戏仍在运行，5 秒后重试（{attempt}/{maxAttempts}）");
+                await Task.Delay(5000);
+                continue;
+            }
+            AppendAutoLog($"「{g.DisplayName}」{note}：连续 {maxAttempts} 次复查游戏仍在运行，已交还监控，真正退出时自动补备");
+            await Dispatcher.InvokeAsync(() =>
+                ShowToast($"「{g.DisplayName}」检测到仍在运行，待真正退出后自动补备"));
+            break;
+            }
+            catch (Exception ex)
+            {
             AppendAutoLog($"「{g.DisplayName}」失败 {note}：{ex.GetType().Name}：{ex.Message}");
             await Dispatcher.InvokeAsync(() => ShowToast($"「{g.DisplayName}」{note}失败：{ex.Message}", true));
+            break;
+            }
+          }
         }
         finally
         {
             AutoBackupGate.Release();
             _autoBusy.Remove(g.Id);
         }
+    }
+
+    /// <summary>退出备份复查发现游戏其实仍在运行：恢复监控用的运行标记（缺席计数清零），
+    /// 让后续轮次重新跟踪、真正退出时再次触发；IsRunning/选中态同步回「游玩中」。</summary>
+    private void MarkGameStillRunning(GameEntry g)
+    {
+        _missingTicks[g.Id] = 0;
+        g.IsRunning = true;
+        if (g.AutoBackup) _wasRunning.Add(g.Id);
+        if (ReferenceEquals(g, SelectedGame)) RefreshActiveSlotLiveStateAsync(g);
     }
 
     /// <summary>自动备份运行日志（logs\auto-backup.log 追加一行）：触发/成功/跳过/失败全记录，
@@ -4054,7 +4128,7 @@ public class CloudDeleteDialog : Window
         });
         root.Children.Add(new TextBlock
         {
-            Text = "· 不勾选下方选项：仅删除本地，云端副本保留，之后可在「☁ 云端备份」里查看或还原\n· 勾选下方选项：本地和云端副本一起删除（云端删除不可恢复）",
+            Text = "· 本地备份会进入「最近删除」，15 天内可在「更多 → 最近删除」还原\n· 不勾选下方选项：云端副本保留，之后可在「☁ 云端备份」里查看或还原\n· 勾选下方选项：本地和云端副本一起删除（云端删除不可恢复）",
             Margin = new Thickness(20, 12, 20, 0),
             FontSize = 12.5,
             LineHeight = 20,

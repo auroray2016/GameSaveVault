@@ -5054,7 +5054,8 @@ else
     }
     // 存档位置分区：标题/路径行留白与玩家分区一致
     int pathSec50 = mainXaml49.IndexOf("<!-- 存档位置 -->", StringComparison.Ordinal);
-    string pathBlock50 = mainXaml49.Substring(pathSec50, Math.Min(2600, mainXaml49.Length - pathSec50));
+    // 截取窗口需覆盖到路径行（标题行「探测路径」按钮含 MDL2 图标后路径行偏移 ~3.2k，留余量取 4k）
+    string pathBlock50 = mainXaml49.Substring(pathSec50, Math.Min(4000, mainXaml49.Length - pathSec50));
     Check("存档位置分区: 标题 16,4,16,7、路径行 16,5（对齐下方分区），旧 16,12/16,9 已移除",
         pathBlock50.Contains("Margin=\"16,4,16,7\"") && pathBlock50.Contains("Margin=\"16,5\"")
         && !pathBlock50.Contains("Margin=\"16,12\"") && !pathBlock50.Contains("Margin=\"16,9\""), "");
@@ -7224,6 +7225,34 @@ Check("性能守卫: WatchTick 进程枚举放 Task.Run 后台执行",
 Check("性能守卫: WatchTick 有 _watchTickBusy 重入保护",
     watchBody61.Contains("_watchTickBusy") && watchBody61.Contains("Interlocked.Exchange"), "");
 
+// 退出误判兜底（英灵神殿 10-16 漏备份事故）：单帧/单轮没枚举到进程不得判退出
+Check("监控守卫: 存在连续缺席计数字段 _missingTicks 与 3 轮阈值 ExitConfirmTicks",
+    perfMain61.Contains("Dictionary<string, int> _missingTicks")
+    && perfMain61.Contains("private const int ExitConfirmTicks = 3;"), "");
+Check("监控守卫: WatchTick 连续缺席满 3 轮才确认退出（宽限内 continue 维持运行态）",
+    perfMain61.Contains("miss < ExitConfirmTicks")
+    && perfMain61.Contains("_missingTicks[g.Id] = miss;")
+    && perfMain61.Contains("连续缺席满 3 轮才确认退出"), "");
+int stateCheckPos61 = perfMain61.IndexOf("private bool CheckGameRunningState", StringComparison.Ordinal);
+string stateCheckBody61 = stateCheckPos61 >= 0
+    ? perfMain61.Substring(stateCheckPos61, Math.Min(900, perfMain61.Length - stateCheckPos61)) : "";
+Check("监控守卫: CheckGameRunningState 只给原始信号、不再单帧摘除 _launched（摘除移到宽限满后）",
+    stateCheckBody61.Length > 0 && !stateCheckBody61.Contains("_launched.Remove"), "");
+int autoBakPos61 = perfMain61.IndexOf("private async Task RunGameBackupAsync", StringComparison.Ordinal);
+string autoBakBody61 = autoBakPos61 >= 0
+    ? perfMain61.Substring(autoBakPos61, Math.Min(4000, perfMain61.Length - autoBakPos61)) : "";
+Check("监控守卫: 退出备份复查撞「游戏正在运行」→恢复标记+5秒重试，最多 3 次后交还监控",
+    autoBakBody61.Contains("!hot && ex.Message.Contains(\"游戏正在运行\")")
+    && autoBakBody61.Contains("Task.Delay(5000)")
+    && autoBakBody61.Contains("const int maxAttempts = 3;")
+    && autoBakBody61.Contains("MarkGameStillRunning(g)"), "");
+Check("监控守卫: MarkGameStillRunning 恢复 IsRunning/_wasRunning 并清零缺席计数（真退出可再次触发）",
+    perfMain61.Contains("private void MarkGameStillRunning(GameEntry g)")
+    && perfMain61.Contains("_missingTicks[g.Id] = 0;")
+    && perfMain61.Contains("if (g.AutoBackup) _wasRunning.Add(g.Id);"), "");
+Check("监控守卫: 进程枚举整轮失败时保守维持上轮状态（不闭合会话/不触发备份）",
+    perfMain61.Contains("所有游戏维持上轮运行状态"), "");
+
 // 联网解析链必须脱离 UI 同步上下文
 int enrichPos61 = perfMain61.IndexOf("EnrichWikiAsync(GameEntry g", StringComparison.Ordinal);
 string enrichBody61 = enrichPos61 >= 0 ? perfMain61.Substring(enrichPos61, 2500) : "";
@@ -7310,9 +7339,206 @@ Check("视觉守卫: 横幅徽章使用 HeroBadge 且已完结字为固定亮绿
     heroBar61.Contains("Style=\"{StaticResource HeroBadge}\"")
     && !heroBar61.Contains("Style=\"{StaticResource Badge}\"")
     && heroBar61.Contains("Foreground=\"#4ADE80\""), "");
-Check("视觉守卫: 「自动获取」已改名「刷新路径」",
-    perfXaml61.Contains("Content=\"刷新路径\"")
-    && !perfXaml61.Contains("Content=\"自动获取\""), "");
+int probeBtnPos61 = perfXaml61.IndexOf("Text=\"探测路径\"", StringComparison.Ordinal);
+int addPathPos61 = perfXaml61.IndexOf("Content=\"＋ 添加路径\"", StringComparison.Ordinal);
+Check("视觉守卫: 「刷新路径」改名「探测路径」并移入存档位置卡片、紧挨「添加路径」之前，前缀 MDL2 放大镜字形（横幅按钮行不再占位）",
+    probeBtnPos61 >= 0 && addPathPos61 >= 0 && probeBtnPos61 < addPathPos61
+    && perfXaml61.Contains("&#xE721;") && perfXaml61.Contains("Segoe MDL2 Assets")
+    && !perfXaml61.Contains("刷新路径")
+    && !perfXaml61.Contains("Content=\"自动获取\"")
+    && !heroBar61.Contains("OnRefreshRules"), "");
+
+// ── 62. 备份回收区：删除进回收区 → 15 天保留 → 还原/过期/轮转/残留清理全链路 ──
+{
+    string repoRoot62 = AppContext.BaseDirectory;
+    for (int i62 = 0; i62 < 8 && !File.Exists(Path.Combine(repoRoot62, "GameSaveManager.sln")); i62++)
+        repoRoot62 = Path.GetDirectoryName(repoRoot62) ?? "";
+    string Src62(string rel) => File.ReadAllText(Path.Combine(repoRoot62, "src", "GameSaveManager", rel));
+    string backupCs62 = Src62(Path.Combine("Services", "BackupService.cs"));
+    string recycleCs62 = Src62(Path.Combine("Services", "RecycleService.cs"));
+    string storeCs62 = Src62(Path.Combine("Services", "Store.cs"));
+    string cloudCs62 = Src62(Path.Combine("Services", "CloudSyncService.cs"));
+    string mainCs62 = Src62("MainWindow.xaml.cs");
+    string settingsXaml62 = Src62("SettingsWindow.xaml");
+    string winXaml62 = Src62("RecycleBinWindow.xaml");
+    Check("回收区: 保留期常量 15 天、实体目录 _recycle、索引 recycle.json 设计在位",
+        recycleCs62.Contains("RetentionDays = 15") && recycleCs62.Contains("DirName = \"_recycle\"")
+        && recycleCs62.Contains("\"recycle.json\""), "");
+    Check("回收区: 五条删除路径全部转入回收区（手动/玩家/移除/轮转/残留）",
+        backupCs62.Contains("RecycleService.MoveIn(g, r, \"manual\"")
+        && backupCs62.Contains("RecycleService.MoveIn(g, b, \"player\")")
+        && backupCs62.Contains("\"removal\"")
+        && backupCs62.Contains("RecycleService.MoveIn(g, victim, \"prune\")")
+        && backupCs62.Contains("RecycleService.MoveInOrphanFolder(full)"), "");
+    Check("回收区: 未关联扫描显式跳过 _recycle；残留删除白名单挡住回收区自身",
+        backupCs62.Contains("leaf.Equals(RecycleService.DirName")
+        && backupCs62.Contains("「最近删除」里的数据请在最近删除窗口中清理"), "");
+    Check("回收区: 启动 PurgeExpired 与按文件名撤销云墓碑在位",
+        storeCs62.Contains("RecycleService.PurgeExpired()")
+        && cloudCs62.Contains("UndismissByFileName"), "");
+    Check("回收区: 入口在「更多」菜单且名为最近删除（设置页不再保留入口）",
+        mainCs62.Contains("OnOpenRecycleBin") && mainCs62.Contains("♻ 最近删除")
+        && !settingsXaml62.Contains("OnOpenRecycleBin")
+        && winXaml62.Contains("Title=\"最近删除 · GameSaveVault\"")
+        && File.Exists(Path.Combine(repoRoot62, "src", "GameSaveManager", "RecycleBinWindow.xaml"))
+        && File.Exists(Path.Combine(repoRoot62, "src", "GameSaveManager", "RecycleBinWindow.xaml.cs")), "");
+
+    int svMaxKeep62 = Store.Settings.MaxKeepPerGame;
+    bool svIncr62 = Store.Settings.IncrementalEnabled;
+    Store.HomeDirOverride = Path.Combine(temp, "vault_recycle");
+    Store.Init();
+    RecycleService.ReloadForTests();   // 回收索引按 BaseDir 懒加载缓存，切根后必须强制重读
+
+    GameEntry MakeGame62(string name, string saveDir)
+    {
+        Directory.CreateDirectory(saveDir);
+        File.WriteAllText(Path.Combine(saveDir, "save.dat"), "v1-" + name);
+        var g = new GameEntry { NameEN = name };
+        g.SavePaths.Add(new SavePathEntry { Path = saveDir });
+        Store.Games.Add(g);
+        return g;
+    }
+
+    // 62.1 手动删除 → 进回收区（实体移位、记录摘除、索引落盘）→ 还原归位回列表
+    var gR62 = MakeGame62("RecycleManual", Path.Combine(temp, "saves_r62"));
+    var recR62 = BackupService.Create(gR62, "手动删除测试");
+    string origFile62 = recR62.File;
+    BackupService.Delete(gR62, recR62);
+    var itemsAfterDel62 = RecycleService.List();
+    Check("回收区: 手动删除后 zip 在 _recycle、原位消失、库中无记录、索引 1 项且快照完整",
+        !File.Exists(origFile62)
+        && Directory.Exists(RecycleService.RecycleDir)
+        && Directory.GetFiles(RecycleService.RecycleDir, "*.zip").Length == 1
+        && gR62.Backups.Count == 0
+        && RecycleService.Count == 1
+        && File.Exists(RecycleService.IndexFile)
+        && itemsAfterDel62[0].Source == "manual"
+        && !string.IsNullOrEmpty(itemsAfterDel62[0].RecordJson)
+        && !string.IsNullOrEmpty(itemsAfterDel62[0].OrigRel)
+        && itemsAfterDel62[0].ExpireAt > DateTime.Now.AddDays(14),
+        $"cnt={RecycleService.Count}");
+
+    var restore62 = RecycleService.Restore(itemsAfterDel62[0].Id);
+    Check("回收区: 还原后文件归位原路径、记录回库、索引摘除",
+        restore62.Ok && restore62.GameFound
+        && File.Exists(origFile62)
+        && string.Equals(restore62.FinalPath, origFile62, StringComparison.OrdinalIgnoreCase)
+        && gR62.Backups.Count == 1
+        && RecycleService.Count == 0, restore62.Message);
+    Check("回收区: 还原不存在的 Id 返回失败不抛异常",
+        !RecycleService.Restore("not-exist-id").Ok, "");
+
+    // 62.2 归位撞名 → _还原N 后缀，绝不覆盖现有文件
+    var recAgain62 = gR62.Backups[0];
+    BackupService.Delete(gR62, recAgain62);
+    string collidePath62 = recAgain62.File;
+    File.WriteAllText(collidePath62, "占位文件，不能被覆盖");
+    var collideItem62 = RecycleService.List()[0];
+    var restoreCollide62 = RecycleService.Restore(collideItem62.Id);
+    Check("回收区: 原位已有文件时还原为 _还原1 后缀且占位文件原样保留",
+        restoreCollide62.Ok
+        && restoreCollide62.FinalPath.Contains("_还原1")
+        && File.ReadAllText(collidePath62) == "占位文件，不能被覆盖"
+        && File.Exists(restoreCollide62.FinalPath), restoreCollide62.FinalPath);
+
+    // 62.3 过期清理：把索引里的 ExpireAt 改到过去 → PurgeExpired 物理删除
+    string nameCollisionRec62 = gR62.Backups.FirstOrDefault(b => b.File.Contains("_还原1"))?.File
+        ?? gR62.Backups[0].File;
+    var recExp62 = gR62.Backups.First(b =>
+        string.Equals(b.File, nameCollisionRec62, StringComparison.OrdinalIgnoreCase));
+    BackupService.Delete(gR62, recExp62);
+    string idxText62 = File.ReadAllText(RecycleService.IndexFile);
+    string expiredText62 = System.Text.RegularExpressions.Regex.Replace(
+        idxText62, @"""ExpireAt"":""[^""]+""", "\"ExpireAt\":\"2020-01-01T00:00:00\"");
+    File.WriteAllText(RecycleService.IndexFile, expiredText62);
+    RecycleService.ReloadForTests();
+    int purged62 = RecycleService.PurgeExpired();
+    Check("回收区: 到期项被 PurgeExpired 物理删除（实体+索引双清）",
+        purged62 == 1 && RecycleService.Count == 0
+        && Directory.GetFiles(RecycleService.RecycleDir, "*.zip").Length == 0, $"purged={purged62}");
+    Store.Games.Remove(gR62);
+
+    // 62.4 自动轮转淘汰进回收区
+    Store.Settings.IncrementalEnabled = false;
+    Store.Settings.MaxKeepPerGame = 2;
+    var gP62 = MakeGame62("RecyclePrune", Path.Combine(temp, "saves_p62"));
+    for (int i62 = 0; i62 < 3; i62++)
+    {
+        File.WriteAllText(Path.Combine(temp, "saves_p62", "save.dat"), "v" + i62);
+        BackupService.Create(gP62, "轮转备份" + i62);
+    }
+    BackupService.Prune(gP62);
+    var pruneItems62 = RecycleService.List().Where(x => x.Source == "prune").ToList();
+    Check("回收区: 超过保留份数的自动淘汰项进入回收区（库中只剩 2 份）",
+        gP62.Backups.Count == 2 && pruneItems62.Count == 1,
+        $"bak={gP62.Backups.Count},prune={pruneItems62.Count}");
+
+    // 62.5 残留目录删除进回收区；_recycle 自身不得被未关联扫描发现；还原后重新被扫描发现
+    string ghostDir62 = Path.Combine(Store.BackupRoot, "GhostRecycleGame", "玩家甲");
+    Directory.CreateDirectory(ghostDir62);
+    string ghostZip62 = Path.Combine(ghostDir62, "ghost_save.zip");
+    File.Copy(gP62.Backups[0].File, ghostZip62);
+    var orphansBefore62 = BackupService.ListOrphans();
+    Check("回收区: 未关联扫描能发现幽灵目录、且绝不把 _recycle 当残留",
+        orphansBefore62.Any(o => o.Name.Contains("GhostRecycleGame"))
+        && !orphansBefore62.Any(o => o.Name.Contains("_recycle")),
+        string.Join(",", orphansBefore62.Select(o => o.Name)));
+    BackupService.DeleteOrphan(Path.Combine(Store.BackupRoot, "GhostRecycleGame"));
+    var orphanItems62 = RecycleService.List().Where(x => x.Source == "orphan").ToList();
+    Check("回收区: 删除残留目录时 zip 入回收区、目录其余内容清空",
+        orphanItems62.Count == 1 && !Directory.Exists(Path.Combine(Store.BackupRoot, "GhostRecycleGame"))
+        && orphanItems62[0].OrigRel.Replace('/', Path.DirectorySeparatorChar).Contains("GhostRecycleGame"),
+        $"orphan={orphanItems62.Count}");
+    var restoreGhost62 = RecycleService.Restore(orphanItems62[0].Id);
+    Check("回收区: 残留项游戏不在库时仅归位文件，重新出现在未关联备份列表",
+        restoreGhost62.Ok && !restoreGhost62.GameFound
+        && File.Exists(ghostZip62)
+        && BackupService.ListOrphans().Any(o => o.Name.Contains("GhostRecycleGame")),
+        restoreGhost62.Message);
+
+    // 62.6 移除游戏连备份删除 → 整批进回收区；游戏仍在库时还原整批、记录全部回库
+    var gM62 = MakeGame62("RecycleRemoval", Path.Combine(temp, "saves_m62"));
+    File.WriteAllText(Path.Combine(temp, "saves_m62", "save.dat"), "m1");
+    BackupService.Create(gM62, "移除前1");
+    File.WriteAllText(Path.Combine(temp, "saves_m62", "save.dat"), "m2");
+    BackupService.Create(gM62, "移除前2");
+    string backupDirM62 = BackupService.BackupDirFor(gM62);
+    BackupService.DeleteAllOnRemoval(gM62);
+    var removalItems62 = RecycleService.List().Where(x => x.Source == "removal").ToList();
+    Check("回收区: 移除游戏连删的 2 份备份整批进回收区，备份目录已清空",
+        removalItems62.Count == 2 && !Directory.Exists(backupDirM62),
+        $"removal={removalItems62.Count}");
+    foreach (var it62 in removalItems62)
+    {
+        var rr62 = RecycleService.Restore(it62.Id);
+        if (!rr62.Ok) Check("回收区: 移除游戏的备份逐个还原成功", false, rr62.Message);
+    }
+    Check("回收区: 整批还原后 2 条记录回到游戏备份列表，回收区清空",
+        gM62.Backups.Count == 2 && RecycleService.List().Count(x => x.Source == "removal") == 0,
+        $"bak={gM62.Backups.Count}");
+
+    // 62.7 PurgeNow 单项永久删除 + ClearAll 清空
+    string pruneId62 = pruneItems62[0].Id;
+    RecycleService.PurgeNow(pruneId62);
+    try { RecycleService.PurgeNow("not-exist"); } catch { Check("回收区: PurgeNow 不存在项不抛异常", false, "抛了"); }
+    Check("回收区: PurgeNow 单项物理删除、不存在项静默",
+        !RecycleService.List().Any(x => x.Id == pruneId62), "");
+    Store.Settings.MaxKeepPerGame = 50;   // 末步不再触发自动轮转，保证 ClearAll 前恰为 1 项
+    File.WriteAllText(Path.Combine(temp, "saves_m62", "save.dat"), "m3");
+    var recClear62 = BackupService.Create(gM62, "待清空");
+    BackupService.Delete(gM62, recClear62);
+    int beforeClear62 = RecycleService.Count;
+    var (cleared62, failedClear62) = RecycleService.ClearAll();
+    Check("回收区: ClearAll 清空全部且计数一致",
+        beforeClear62 == 1 && cleared62 == 1 && failedClear62 == 0 && RecycleService.Count == 0,
+        $"before={beforeClear62},removed={cleared62},failed={failedClear62}");
+
+    // 复位：后续守卫/真实环境不受缓存与设置污染
+    Store.Settings.MaxKeepPerGame = svMaxKeep62;
+    Store.Settings.IncrementalEnabled = svIncr62;
+    Store.HomeDirOverride = null;
+    RecycleService.ReloadForTests();
+}
 
 Console.WriteLine($"\n结果: {pass} 通过, {fail} 失败");
 try { Directory.Delete(temp, true); } catch { }

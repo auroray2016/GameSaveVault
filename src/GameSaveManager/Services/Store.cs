@@ -200,6 +200,7 @@ public static class Store
         SnapshotAppData("settings.json");
         SnapshotAppData("rules.json");
         PruneStaleSavePaths();   // 清洗旧版误报存档路径（game.exe 通用名误扫等），有移除才落盘
+        try { RecycleService.PurgeExpired(); } catch { /* 回收区清理失败不影响启动 */ }
     }
 
     /// <summary>启动清洗：移除旧版模糊匹配误报的存档路径（含本软件自身目录），有移除才落盘。</summary>

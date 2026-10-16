@@ -67,7 +67,8 @@ public partial class OrphanBackupsWindow : Window
     {
         if (((FrameworkElement)sender).Tag is not BackupService.OrphanBackupInfo o) return;
         var r = MessageBox.Show(this,
-            $"彻底删除「{o.Name}」的{o.TypeText}？\n{o.DetailText}，占用 {o.SizeText}。\n删除后无法恢复。",
+            $"删除「{o.Name}」的{o.TypeText}？\n{o.DetailText}，占用 {o.SizeText}。\n" +
+            "其中的备份 zip 会进入「最近删除」，15 天内可在「更多 → 最近删除」中还原。",
             "确认删除残留", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (r != MessageBoxResult.Yes) return;
         try

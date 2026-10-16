@@ -858,6 +858,22 @@ public static class CloudSyncService
         }
     }
 
+    /// <summary>回收区还原时调用：删除时游戏可能已不在库、拿不到目录段映射，
+    /// 故按文件名清除该文件在所有目录段下的「不再下载」墓碑（键格式 seg/fileName）。</summary>
+    public static void UndismissByFileName(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return;
+        lock (_gate)
+        {
+            var dead = _state.Dismissed.Keys
+                .Where(k => k.EndsWith("/" + fileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (dead.Count == 0) return;
+            foreach (var k in dead) _state.Dismissed.Remove(k);
+            SaveState();
+        }
+    }
+
     /// <summary>孤儿墓碑清扫：游戏被移出库或改名后，其墓碑键的目录前缀已无主，
     /// 永远不会再被该游戏的云端清单 GC 命中（GcDismissed 只按在库游戏的候选目录段回收），
     /// 启动/每次拉到新索引后按「在库游戏候选目录段 ∪ 手动映射键」清掉无主墓碑，防止黑名单无限增长。

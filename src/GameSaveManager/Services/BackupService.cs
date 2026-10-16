@@ -1113,7 +1113,7 @@ public static class BackupService
         return failed;
     }
 
-    public static void Delete(GameEntry g, BackupRecord r)
+    public static void Delete(GameEntry g, BackupRecord r, bool cloudRemoteDeleted = false)
     {
         using var __zone = EnterGameZone(g.Id);
         // 是同玩家其他增量备份的基础 → 删除会断链，拒绝（不同玩家目录不同，不构成依赖）
@@ -1124,17 +1124,15 @@ public static class BackupService
         if (dependents > 0)
             throw new InvalidOperationException(
                 $"该备份是 {dependents} 份增量备份的基础，请先删除依赖它的备份");
-        // 物理删除失败（文件被占用/权限不足/路径过长）必须中止：记录照删会让 zip 成为
-        // 永久扫不出来的残留（游戏仍在库，孤儿扫描跳过整个目录）
+        // 不再物理删除：移入回收区（保留 15 天可还原）。移动失败（占用/权限/跨盘复制失败）必须中止：
+        // 记录照摘会让 zip 成为永久扫不出来的残留（游戏仍在库，孤儿扫描跳过整个目录）
         if (File.Exists(r.File))
         {
-            try { File.Delete(r.File); }
-            catch (Exception ex)
-            {
+            var moved = RecycleService.MoveIn(g, r, "manual", cloudRemoteDeleted);
+            if (moved == null)
                 throw new InvalidOperationException(
-                    $"备份文件删除失败，记录已保留：{Path.GetFileName(r.File)}\n原因：{ex.Message}\n" +
-                    "请关闭占用该文件的程序（同步盘、压缩软件等）后重试。", ex);
-            }
+                    $"备份移入「最近删除」失败，记录已保留：{Path.GetFileName(r.File)}\n" +
+                    "请关闭占用该文件的程序（同步盘、压缩软件等）后重试。");
         }
         g.Backups.Remove(r);
         // 云端仍有这份 zip 时记入「不再自动下载」黑名单：用户删了就是不要了，
@@ -1256,31 +1254,27 @@ public static class BackupService
         Store.Save();
     }
 
-    /// <summary>删除玩家：删除其备份子目录与全部备份记录，返回删除份数。</summary>
+    /// <summary>删除玩家：其全部 zip 移入回收区（15 天内可连同玩家备份一起找回），
+    /// 备份记录从库中摘除，返回移入份数。被占用移不走的文件保留记录并汇总报错。</summary>
     public static int DeletePlayerBackups(GameEntry g, string player)
     {
         using var __zone = EnterGameZone(g.Id);
         var recs = g.Backups.Where(b => (b.Profile ?? "") == player).ToList();
         string dir = PlayerBackupDir(g, player);
-        // 先删物理文件：只有删掉的（及本就不存在的僵尸记录）才允许移除记录；
+        // 逐个移入回收区：只有移走的（及本就不存在的僵尸记录）才允许移除记录；
         // 被占用的保留记录，否则 zip 残留且玩家卡槽已删，文件永远扫不回来
         var deletedRecs = new List<BackupRecord>();
         var failedFiles = new List<string>();
-        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
-        catch (Exception ex) { failedFiles.Add($"{dir}（{ex.GetType().Name}）"); }
-        bool dirGone = !Directory.Exists(dir);
         foreach (var b in recs)
         {
-            bool gone = !File.Exists(b.File)
-                || (dirGone && !string.IsNullOrEmpty(b.File)
-                    && b.File.StartsWith(dir, StringComparison.OrdinalIgnoreCase));
-            if (!gone)
-            {
-                try { File.Delete(b.File); gone = true; }
-                catch (Exception ex) { failedFiles.Add($"{Path.GetFileName(b.File)}（{ex.Message}）"); }
-            }
-            if (gone) deletedRecs.Add(b);
+            if (!File.Exists(b.File)) { deletedRecs.Add(b); continue; }   // 僵尸记录：直接摘
+            var moved = RecycleService.MoveIn(g, b, "player");
+            if (moved != null) deletedRecs.Add(b);
+            else failedFiles.Add($"{Path.GetFileName(b.File)}（文件被占用）");
         }
+        // 玩家子目录残余（空目录/非 zip 内容）清空；失败不影响记录口径
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
+        catch (Exception ex) { failedFiles.Add($"{dir}（{ex.GetType().Name}）"); }
         foreach (var b in deletedRecs) g.Backups.Remove(b);
         if (deletedRecs.Count > 0)
         {
@@ -1306,12 +1300,19 @@ public static class BackupService
     public static long TotalBytesOnDisk(GameEntry g) =>
         DirSize(BackupDirFor(g)) + DirSize(ProfileService.RootFor(g));
 
-    /// <summary>移除游戏时选择"连备份一起删除"：删除全部 zip、玩家子目录与玩家镜像（games.json 记录由调用方删除）。</summary>
+    /// <summary>移除游戏时选择"连备份一起删除"：全部 zip 移入回收区（15 天内可找回），
+    /// 再清空目录残余与玩家镜像（games.json 记录由调用方删除）。</summary>
     public static void DeleteAllOnRemoval(GameEntry g)
     {
         using var __zone = EnterGameZone(g.Id);
-        TryDeleteDir(BackupDirFor(g));
-        TryDeleteDir(ProfileService.RootFor(g));
+        // 在库记录指向的 zip 逐个收入（带完整记录快照，还原即回到备份列表）
+        RecycleService.MoveInMany(g, g.Backups.ToList(), "removal");
+        // 目录内可能还有记录之外的散包（历史手动放入/异常残留）：按文件路径一并回收
+        string backupDir = BackupDirFor(g);
+        if (Directory.Exists(backupDir))
+            RecycleService.MoveInOrphanFolder(backupDir, "removal", g.DisplayName);
+        TryDeleteDir(backupDir);                    // 空目录/玩家镜像等非 zip 残余
+        TryDeleteDir(ProfileService.RootFor(g));    // 切换玩家用的 live 镜像：非备份包，不进回收区
     }
 
     // ── 备份目录迁移认领：旧根里的 zip 移动到当前根 ──
@@ -1666,6 +1667,7 @@ public static class BackupService
             {
                 string leaf = Path.GetFileName(d);
                 if (leaf.Equals("profiles", StringComparison.OrdinalIgnoreCase)) continue;
+                if (leaf.Equals(RecycleService.DirName, StringComparison.OrdinalIgnoreCase)) continue;  // 回收区
                 if (leaf.Equals(Store.AppSnapshotDir, StringComparison.OrdinalIgnoreCase)) continue;   // 程序自身数据快照
                 if (gameNames.Contains(leaf)) continue;    // 属于某在库游戏
                 if (usedRoots.Contains(leaf)) continue;    // 被在库游戏的备份记录引用（历史英文名目录）
@@ -1723,13 +1725,32 @@ public static class BackupService
         };
     }
 
-    /// <summary>删除一个残留目录（仅允许删除备份根之内的路径；UI 调用前须二次确认）。</summary>
+    /// <summary>删除一个残留目录（仅允许删除备份根之内的路径；UI 调用前须二次确认）。
+    /// 目录内 zip 先进回收区（15 天可还原），其余内容递归清空。</summary>
     public static void DeleteOrphan(string dir)
     {
         string root = Path.GetFullPath(Store.BackupRoot).TrimEnd(Path.DirectorySeparatorChar);
         string full = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar);
         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("只能删除备份目录内的残留数据");
+        // 回收区自身禁止从这里删（它不是任何游戏的残留目录，且批量回收时正被读写）
+        if (full.StartsWith(
+                Path.GetFullPath(RecycleService.RecycleDir).TrimEnd(Path.DirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("「最近删除」里的数据请在最近删除窗口中清理");
+        // 归档游戏的死记录带完整快照，优先按记录收入（还原能直接回列表）；其余散包由目录扫描兜底
+        string prefix = full + Path.DirectorySeparatorChar;
+        foreach (var g in Store.Games)
+        {
+            var recs = g.Backups.Where(b =>
+            {
+                if (string.IsNullOrEmpty(b.File)) return false;
+                try { return Path.GetFullPath(b.File).StartsWith(prefix, StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            }).ToList();
+            if (recs.Count > 0) RecycleService.MoveInMany(g, recs, "orphan");
+        }
+        RecycleService.MoveInOrphanFolder(full);
         Directory.Delete(full, recursive: true);
         PruneRecordsUnder(full);
     }
@@ -1828,8 +1849,12 @@ public static class BackupService
             // 运行中热快照价值低、时效短 → 优先淘汰，尽量保住冷备份链（列表新→旧，Last 即最旧）
             var victim = candidates.LastOrDefault(b => b.Hot) ?? candidates.Last();
             if (ReferenceEquals(victim, mine[0])) break;      // 只能牺牲最新还原点 → 停止
-            try { if (File.Exists(victim.File)) File.Delete(victim.File); }
-            catch { break; }   // 被占用：保留记录并停止本轮淘汰（下轮再试），绝不留僵尸记录
+            // 淘汰同样先进回收区（用户指定：15 天内可找回；还原后如想长期保留请手动锁定）
+            if (File.Exists(victim.File))
+            {
+                var moved = RecycleService.MoveIn(g, victim, "prune");
+                if (moved == null) break;   // 被占用/移动失败：保留记录并停止本轮（下轮再试）
+            }
             g.Backups.Remove(victim);
             mine.Remove(victim);
         }

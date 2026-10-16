@@ -497,9 +497,6 @@
                                     </Button>
                                     <Button Style="{StaticResource BtnSmOnHero}" Content="移除游戏" VerticalAlignment="Center" Margin="0,0,6,6"
                                             Click="OnRemoveGame"/>
-                                    <Button Style="{StaticResource BtnSmOnHero}" Content="刷新路径" Margin="0,0,0,6"
-                                            VerticalAlignment="Center" Click="OnRefreshRules"
-                                            ToolTip="强制联网刷新 Wiki 存档规则，并重跑本地规则（rules.json），自动补全存档目录"/>
                                 </WrapPanel>
                             </StackPanel>
                         </StackPanel>
@@ -531,6 +528,15 @@
                                                 Visibility="{Binding WikiFailed, Converter={StaticResource BoolToVis}}"
                                                 Click="OnWikiRetry"
                                                 ToolTip="Wiki 规则联网获取失败（缓存也无数据）。点击强制重试，成功后会自动补充存档路径"/>
+                                        <Button Style="{StaticResource BtnSm}" Margin="0,0,8,0"
+                                                Click="OnRefreshRules"
+                                                ToolTip="联网获取 Wiki 存档规则并重跑本地规则（rules.json），自动探测补全存档目录">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                           VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                                <TextBlock Text="探测路径" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
                                         <Button Style="{StaticResource BtnSm}" Content="＋ 添加路径"
                                                 Click="OnAddSavePath"/>
                                     </StackPanel>
