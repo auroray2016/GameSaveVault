@@ -93,3 +93,7 @@ C# / .NET 8 · WPF + WinForms（部分系统对话框）· 单文件自包含发
 ## 状态
 
 当前为 **Beta**，功能持续打磨中。欢迎在 [Issues](https://github.com/auroray2016/GameSaveVault/issues) 反馈 bug、游戏识别问题与功能建议。
+
+## 许可证
+
+基于 [MIT License](LICENSE) 开源，可自由使用、修改与分发，请保留原始版权声明。
