@@ -9,7 +9,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/download/dotnet/8.0)
 [![下载量](https://img.shields.io/github/downloads/auroray2016/GameSaveVault/total?label=下载量)](https://github.com/auroray2016/GameSaveVault/releases)
 
-![GameSaveVault 主界面](website/shots/main-1600.png)
+![GameSaveVault 完结馆：按月份墙展示已通关的游戏，含封面、通关日期与总游玩时长](website/shots/main-1600.png)
 
 ---
 
