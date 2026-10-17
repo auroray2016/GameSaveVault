@@ -425,9 +425,10 @@
                                     MouseLeftButtonUp="OnLocateInList" Cursor="Hand"
                                     ToolTip="在左侧列表中定位此游戏">
                             <Border Width="82" Height="82" CornerRadius="14" BorderBrush="{DynamicResource IconRing}"
-                                    BorderThickness="2" ClipToBounds="True"
+                                    BorderThickness="2"
                                     Background="{DynamicResource Panel2}">
-                                <Grid>
+                                <!-- 裁剪挂内层：内容区在 2px 描边内侧，内缘圆角 = 14-2 = 12 -->
+                                <Grid local:CornerClip.Radius="12">
                                     <Image Source="{Binding IconFile}" Stretch="UniformToFill"
                                            Visibility="{Binding HasIcon, Converter={StaticResource BoolToVis}}"/>
                                     <Border Visibility="{Binding HasIcon, Converter={StaticResource InverseBoolToVis}}">
@@ -1720,9 +1721,10 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Border Grid.Column="0" Width="104" Height="156" CornerRadius="8"
-                                                ClipToBounds="True" Background="{DynamicResource Panel2}"
+                                                Background="{DynamicResource Panel2}"
                                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
-                                            <Grid>
+                                            <!-- 内缘圆角 = 8-1 = 7 -->
+                                            <Grid local:CornerClip.Radius="7">
                                                 <Image Source="{Binding PosterDisplayFile}" Stretch="UniformToFill"
                                                        RenderOptions.BitmapScalingMode="HighQuality"
                                                        Visibility="{Binding HasPosterDisplay, Converter={StaticResource BoolToVis}}"/>

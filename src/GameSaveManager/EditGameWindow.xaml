@@ -141,8 +141,9 @@
                                Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
                     <Border Grid.Column="1" Width="92" Height="43" CornerRadius="6"
                             Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="1" ClipToBounds="True">
-                        <Grid>
+                            BorderThickness="1">
+                        <!-- 内缘圆角 = 6-1 = 5 -->
+                        <Grid local:CornerClip.Radius="5">
                             <Image x:Name="CoverPreview" Stretch="UniformToFill"/>
                             <TextBlock x:Name="CoverEmpty" Text="无封面" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -166,8 +167,9 @@
                                Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
                     <Border Grid.Column="1" Width="40" Height="40" CornerRadius="8"
                             Background="{DynamicResource Panel2}" BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="1" ClipToBounds="True">
-                        <Grid>
+                            BorderThickness="1">
+                        <!-- 内缘圆角 = 8-1 = 7 -->
+                        <Grid local:CornerClip.Radius="7">
                             <Image x:Name="IconPreview" Stretch="UniformToFill"/>
                             <TextBlock x:Name="IconEmpty" Text="无" FontSize="10.5" Foreground="{DynamicResource TextSecondary}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
