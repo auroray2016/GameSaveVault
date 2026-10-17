@@ -119,6 +119,34 @@ public static class DataMigration
             || n.Contains("开始游戏") || n.Contains("bootstrap");
     }
 
+    /// <summary>启动时一次性迁移：旧版提取图标只裁透明边，卡片式图标自带的不透明浅画框/外阴影会保留下来，
+    /// 在 UI 圆角框里呈现"框中框、小一圈"。对 icons 缓存重跑保守裁框（判定幂等），跳过用户手动指定的 custom_ 图标。
+    /// 标记文件保证只全量扫描一次；单张失败不会破坏原图。</summary>
+    public static int TrimIconBorders()
+    {
+        string marker = Path.Combine(Store.IconsDir, ".frame_trim_v1");
+        if (File.Exists(marker)) return 0;
+        int changed = 0;
+        try
+        {
+            if (Directory.Exists(Store.IconsDir))
+            {
+                foreach (string f in Directory.GetFiles(Store.IconsDir, "*.png"))
+                {
+                    if (Path.GetFileName(f).StartsWith("custom_", StringComparison.OrdinalIgnoreCase)) continue;
+                    try { if (IconExtractor.TrimPngFile(f)) changed++; }
+                    catch { /* 单张失败跳过，不影响其他图标 */ }
+                }
+            }
+        }
+        finally
+        {
+            // 写不上标记只是下次启动多扫一遍，不能因此抛异常影响启动
+            try { File.WriteAllText(marker, "1"); } catch { }
+        }
+        return changed;
+    }
+
     /// <summary>任意 WIC 可读图片（jpg/png/webp/bmp…）转码为 JPEG。
     /// 走文件流解码而非 UriSource：源路径含 # 等 URI 保留字符时 Uri 会截断路径导致加载失败；
     /// OnLoad 解码完立即释放源文件句柄。</summary>

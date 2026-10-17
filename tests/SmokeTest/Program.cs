@@ -699,6 +699,105 @@ else
     }
 }
 
+// ── 15b. 卡片式图标自带画框：保守裁框判据合成图回归（真实库 156 图标仅 1 例命中，严防误伤）──
+{
+    // BGRA32 合成图：paint(像素数组, 宽, 高)
+    static BitmapSource BuildIcon(int w, int h, Action<byte[], int, int> paint)
+    {
+        var bmp = new WriteableBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+        var px = new byte[w * h * 4];
+        paint(px, w, h);
+        bmp.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), px, w * 4, 0);
+        bmp.Freeze();
+        return bmp;
+    }
+    static void Fill(byte[] px, int w, int x0, int y0, int x1, int y1, byte r, byte g, byte b, byte a)
+    {
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++)
+            {
+                int i = (y * w + x) * 4;
+                px[i] = b; px[i + 1] = g; px[i + 2] = r; px[i + 3] = a;
+            }
+    }
+    // 大富翁11 结构：外侧透明/投影 → 浅灰实体框 → 红色满版内容（框厚6，右/下投影3）
+    BitmapSource Card() => BuildIcon(100, 100, (px, w, h) =>
+    {
+        Fill(px, w, 0, 0, 99, 99, 0, 0, 0, 0);          // 全透明底
+        Fill(px, w, 97, 0, 99, 99, 60, 60, 60, 120);    // 右、下投影带（半透明暗）
+        Fill(px, w, 0, 97, 99, 99, 60, 60, 60, 120);
+        Fill(px, w, 3, 3, 96, 96, 235, 235, 235, 255);  // 浅灰实体框（覆盖到投影内侧）
+        Fill(px, w, 9, 9, 90, 90, 220, 60, 60, 255);    // 画面
+    });
+
+    var card = IconExtractor.TrimNeutralBorder(Card());
+    // 四边均为 外缘3(透明/投影) + 浅框6 = 9 → 输出 82x82
+    Check("裁框: 卡片式图标（浅框+外阴影）被裁", card.PixelWidth == 82 && card.PixelHeight == 82,
+        $"{card.PixelWidth}x{card.PixelHeight}，期望 82x82");
+    var card2 = IconExtractor.TrimNeutralBorder(card);
+    Check("裁框: 幂等（裁完再扫不再裁）", card2.PixelWidth == 82 && card2.PixelHeight == 82,
+        $"{card2.PixelWidth}x{card2.PixelHeight}");
+
+    // 透明背景 logo（巫师式）：内容居中、四周透明，无实体框
+    var logo = BuildIcon(100, 100, (px, w, h) =>
+    {
+        Fill(px, w, 0, 0, 99, 99, 0, 0, 0, 0);
+        Fill(px, w, 20, 20, 79, 79, 40, 40, 48, 255);
+    });
+    var logoT = IconExtractor.TrimNeutralBorder(logo);
+    Check("裁框: 透明背景 logo 不裁", logoT.PixelWidth == 100 && logoT.PixelHeight == 100,
+        $"{logoT.PixelWidth}x{logoT.PixelHeight}");
+
+    // 四周仅透明/阴影带、无实体框（守望式圆形徽章）：四边等宽中性带但 frameSides=0
+    var shadowLogo = BuildIcon(100, 100, (px, w, h) =>
+    {
+        Fill(px, w, 0, 0, 99, 99, 0, 0, 0, 0);
+        Fill(px, w, 8, 8, 91, 91, 80, 190, 90, 255);
+    });
+    var shadowLogoT = IconExtractor.TrimNeutralBorder(shadowLogo);
+    Check("裁框: 纯透明边无实体框不裁", shadowLogoT.PixelWidth == 100 && shadowLogoT.PixelHeight == 100,
+        $"{shadowLogoT.PixelWidth}x{shadowLogoT.PixelHeight}");
+
+    // 满版饱和蓝底（PVZ 实测角落实色 90,168,199）
+    var blue = BuildIcon(100, 100, (px, w, h) => Fill(px, w, 0, 0, 99, 99, 90, 168, 199, 255));
+    var blueT = IconExtractor.TrimNeutralBorder(blue);
+    Check("裁框: 满版饱和蓝底不裁", blueT.PixelWidth == 100 && blueT.PixelHeight == 100,
+        $"{blueT.PixelWidth}x{blueT.PixelHeight}");
+
+    // 满版深色海报（艾尔登式深青）
+    var dark = BuildIcon(100, 100, (px, w, h) => Fill(px, w, 0, 0, 99, 99, 10, 30, 25, 255));
+    var darkT = IconExtractor.TrimNeutralBorder(dark);
+    Check("裁框: 满版深色海报不裁", darkT.PixelWidth == 100 && darkT.PixelHeight == 100,
+        $"{darkT.PixelWidth}x{darkT.PixelHeight}");
+
+    // 整片浅灰无边图：中性带走不到画面内边界，拒绝
+    var flat = BuildIcon(100, 100, (px, w, h) => Fill(px, w, 0, 0, 99, 99, 235, 235, 235, 255));
+    var flatT = IconExtractor.TrimNeutralBorder(flat);
+    Check("裁框: 整片浅灰无边图不裁", flatT.PixelWidth == 100 && flatT.PixelHeight == 100,
+        $"{flatT.PixelWidth}x{flatT.PixelHeight}");
+
+    // 只有上下边有框、左右内容顶到边：非闭合矩形框，拒绝
+    var open = BuildIcon(100, 100, (px, w, h) =>
+    {
+        Fill(px, w, 0, 0, 99, 7, 235, 235, 235, 255);
+        Fill(px, w, 0, 92, 99, 99, 235, 235, 235, 255);
+        Fill(px, w, 0, 8, 99, 91, 220, 60, 60, 255);
+    });
+    var openT = IconExtractor.TrimNeutralBorder(open);
+    Check("裁框: 非闭合框（仅上下边）不裁", openT.PixelWidth == 100 && openT.PixelHeight == 100,
+        $"{openT.PixelWidth}x{openT.PixelHeight}");
+
+    var small = BuildIcon(24, 24, (px, w, h) =>
+    {
+        Fill(px, w, 0, 0, 23, 23, 0, 0, 0, 0);
+        Fill(px, w, 2, 2, 21, 21, 235, 235, 235, 255);
+        Fill(px, w, 5, 5, 18, 18, 220, 60, 60, 255);
+    });
+    var smallT = IconExtractor.TrimNeutralBorder(small);
+    Check("裁框: 小于 32px 的图标不处理", smallT.PixelWidth == 24 && smallT.PixelHeight == 24,
+        $"{smallT.PixelWidth}x{smallT.PixelHeight}");
+}
+
 // ── 16. 玩家存档：多玩家存档/备份隔离全流程 ──
 {
     string vault4 = Path.Combine(temp, "vault4");
