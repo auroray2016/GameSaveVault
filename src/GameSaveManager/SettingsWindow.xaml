@@ -249,7 +249,7 @@
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
                         <TextBlock Text="每游戏最多保留份数" FontSize="13"
                                    Foreground="{DynamicResource TextPrimary}"/>
-                        <TextBlock Text="超出后自动删除最旧的备份（增量链不会被破坏）"
+                        <TextBlock Text="超出后自动删除最旧的备份（增量链不会被破坏；🔒锁定的备份不占此配额）"
                                    FontSize="11" Foreground="{DynamicResource TextSecondary}"
                                    Margin="0,2,0,0" TextWrapping="Wrap"/>
                     </StackPanel>

@@ -1824,18 +1824,11 @@ public static class BackupService
         string profile = g.ActiveProfile ?? "";
         // 只在当前玩家的备份范围内清理；其他玩家的备份不受保留份数限制影响
         var mine = g.Backups.Where(b => (b.Profile ?? "") == profile).ToList();
-        // 各玩家"心目中的存档"指针包一律豁免（含其他玩家——按整条游戏保护，与 mine 求交自然只命中本人的）。
-        // FileJson 可能存相对或绝对口径，ResolveFile 归一为绝对路径后与 b.File 比较。
-        var favFiles = new HashSet<string>(
-            (g.SwitchAnchors?.Values ?? Enumerable.Empty<string>())
-                .Where(p => !string.IsNullOrEmpty(p))
-                .Select(BackupRecord.ResolveFile),
-            StringComparer.OrdinalIgnoreCase);
-        bool IsProtected(BackupRecord b) => b.Locked || favFiles.Contains(b.File);
+        // 保留份数规则：只有 🔒锁定 备份额外保留、不占配额；「心目中的存档」只是玩家认可的进度指针，
+        // 不做特别保留——指针包被淘汰后 ResolveFavorite 会自动回退到最新可还原包，还原能力不受影响。
         // 只删除「没有后继增量引用」的备份，保证增量链始终完整。
         // 列表按新→旧插入，Last 即最旧（时间相同同秒创建时也比按 Time 排序可靠）
-        // 锁定项与心目中指针包额外保留、不占保留份数配额：仅当「未受保护」数量超限时才淘汰
-        while (mine.Count(b => !IsProtected(b)) > max)
+        while (mine.Count(b => !b.Locked) > max)
         {
             var referenced = mine
                 .Where(b => b.BaseFile.Length > 0)
@@ -1843,7 +1836,7 @@ public static class BackupService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var candidates = mine
                 .Where(b => !referenced.Contains(Path.GetFileName(b.File)))
-                .Where(b => !IsProtected(b))   // 🔒锁定 与 ★心目中指针包：不参与自动淘汰（手动删除照常）
+                .Where(b => !b.Locked)   // 🔒锁定：不参与自动淘汰（手动删除照常）；心目中指针包照常淘汰
                 .ToList();
             if (candidates.Count == 0) break;  // 未锁定且不在增量链上的候选没了 → 宁可超限也不删锁定项
             // 运行中热快照价值低、时效短 → 优先淘汰，尽量保住冷备份链（列表新→旧，Last 即最旧）

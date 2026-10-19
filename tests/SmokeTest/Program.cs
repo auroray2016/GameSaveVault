@@ -396,24 +396,29 @@ else
     Check("增量: 2 级链还原", File.ReadAllText(Path.Combine(saveDir2, "x.txt")) == "X333");
 
     // 10.6 保留份数清理：无依赖的旧备份先删、链上节点保留。
-    // 注意：上面刚 Restore(c3)，c3 已成"心目中的档"指针包（why=restore）→ 与🔒并列豁免、不占配额；
-    // 此时可删候选只剩最新点 c4（永不牺牲）→ 宁超上限也一份不删，c3 与整条链都保住
+    // 规则：只有🔒锁定额外保留、不占配额；上面刚 Restore(c3)，c3 虽是"心目中的档"指针包（why=restore），
+    // 但不做特别保留。max=3、4 份未锁定超限：c3 无增量依赖 → c3 被淘汰（c1/c2 在链上被引用，保住）
     Store.Settings.MaxKeepPerGame = 3;
-    BackupService.Prune(g2);   // 4 份：c4(最新,full) c3(★指针,incr) c2/c1(链上被引用) → 无可删候选
-    Check("保留: 心目中指针包豁免 Prune（超配额也保住 c3），增量链不断",
-        g2.Backups.Count == 4 && g2.Backups.Contains(c3)
+    BackupService.Prune(g2);   // 4 份：c4(最新,full) c3(★指针,incr) c2/c1(链上被引用) → 删 c3
+    Check("保留: 心目中指针包不豁免 Prune，超配额的 c3 被淘汰、增量链不断",
+        g2.Backups.Count == 3 && !g2.Backups.Contains(c3)
+        && g2.Backups.Contains(c4)
         && g2.Backups.Any(b => b.Kind == "incr") && g2.Backups.Any(b => b.Kind == "full"),
         string.Join(",", g2.Backups.Select(b => b.Kind)));
-    // 解除指针（模拟她认可了更新的 c4）后再 Prune：上限压到 2，未保护 3 份超限 → 旧节点可被淘汰
+    // 指针悬空不致命：ResolveFavorite 回退到最新可还原包（此时即 c4）
+    var fav = ProfileService.ResolveFavorite(g2, c3.Profile ?? "", out string favWhy);
+    Check("保留: 指针包被淘汰后心目中的档自愈回退最新包",
+        fav == c4, $"why={favWhy}");
+    // 上限压到 2：未锁定 3 份超限 → c2 无依赖可被淘汰，留 c4(full) 与链基础 c1(full)
     ProfileService.MarkFavorite(g2, c4.Profile ?? "", c4.FileJson, "manual");
     Store.Settings.MaxKeepPerGame = 2;
-    BackupService.Prune(g2);   // 未保护 3 份 > 2：候选 {c3 无引用}→ 删 c3
-    Check("保留: 指针移走后旧备份可正常淘汰（3 份）且最新点存活",
-        g2.Backups.Count == 3 && g2.Backups.Contains(c4) && !g2.Backups.Contains(c3)
-        && g2.Backups.Any(b => b.Kind == "full"),
+    BackupService.Prune(g2);
+    Check("保留: 继续淘汰至上限（2 份）且最新点存活",
+        g2.Backups.Count == 2 && g2.Backups.Contains(c4)
+        && g2.Backups.All(b => b.Kind == "full"),
         string.Join(",", g2.Backups.Select(b => b.Kind)));
-    BackupService.Restore(g2, g2.Backups[0]);   // 剩余链仍可还原
-    Check("保留: 清理后链仍可还原", File.ReadAllText(Path.Combine(saveDir2, "x.txt")).StartsWith("X"));
+    BackupService.Restore(g2, g2.Backups[0]);   // 剩余备份仍可还原
+    Check("保留: 清理后仍可还原", File.ReadAllText(Path.Combine(saveDir2, "x.txt")).StartsWith("X"));
 
     // 10.7 关闭增量 → 全部全量
     Store.Settings.IncrementalEnabled = false;
@@ -6401,7 +6406,7 @@ else
         Check("心目中的档: 悬空指针不抛异常、回退最新可还原包",
             favDangle59 != null && favDangle59.FileJson == latestFb59.FileJson, "");
 
-        // 59.C Prune：指针包与锁并列豁免、不占保留配额
+        // 59.C Prune：仅 🔒锁定 不占配额；心目中指针包正常参与淘汰，悬空后 ResolveFavorite 自愈回退最新
         Store.Settings.MaxKeepPerGame = 3;
         string prLive59 = Path.Combine(temp, "fav_prune59");
         Directory.CreateDirectory(prLive59);
@@ -6411,7 +6416,9 @@ else
         File.WriteAllText(prf59, "pr-v1");
         File.SetLastWriteTime(prf59, DateTime.Now.AddMinutes(-40));
         ProfileService.CreatePlayer(gPr59, "留档59");
-        var pz1_59 = gPr59.Backups.Single(b => b.Profile == "留档59");
+        var pz1_59 = gPr59.Backups.Single(b => b.Profile == "留档59");   // 初始指针包
+        // 错开秒级时间戳：避免 z1 被淘汰后同秒新包复用其文件名，导致指针 FileJson 误命中新包
+        System.Threading.Thread.Sleep(1100);
         BackupRecord? pz2_59 = null;
         int idxPr59 = 2;
         foreach (var (txt, mins) in new[] {
@@ -6424,12 +6431,20 @@ else
             idxPr59++;
         }
         var pzLast59 = gPr59.Backups.OrderByDescending(b => b.Time).First();
-        Check("心目中的档: Prune 超配额淘汰旧包但豁免指针包（z1 存活、z2 淘汰、总数 4）",
-            gPr59.Backups.Count == 4
-            && gPr59.Backups.Any(b => b.FileJson == pz1_59.FileJson) && File.Exists(pz1_59.File)
+        // 5 份全量均未锁定 > 3，候选新→旧 [z5,z4,z3,z2,z1]，依次淘汰最旧 z1、z2，剩 z3,z4,z5
+        Check("心目中的档: Prune 指针包不再豁免、z1 与 z2 淘汰、剩 3 份",
+            gPr59.Backups.Count == 3
+            && !gPr59.Backups.Any(b => b.FileJson == pz1_59.FileJson) && !File.Exists(pz1_59.File)
             && !gPr59.Backups.Any(b => b.FileJson == pz2_59!.FileJson) && !File.Exists(pz2_59!.File)
             && gPr59.Backups.Any(b => b.FileJson == pzLast59.FileJson),
             $"n={gPr59.Backups.Count}");
+        // 指针原本指向 z1，已被删（文件名不复用）→ ResolveFavorite 回退到最新可还原包 z5
+        // （why 仍为 init：FavoriteWhy 原有值非空时 fallback 分支不覆盖 why，属既有行为）
+        var favPrune59 = ProfileService.ResolveFavorite(gPr59, gPr59.ActiveProfile, out _);
+        Check("心目中的档: 指针包被淘汰后 ResolveFavorite 回退到最新包（非原指针目标）",
+            favPrune59 != null && favPrune59.FileJson == pzLast59.FileJson
+            && favPrune59.FileJson != pz1_59.FileJson,
+            favPrune59?.FileJson ?? "<null>");
 
         // 59.D 启动迁移 BackfillFavorite：旧还原标记 ±2s 命中→restore；找不到→二次回填最新；幂等
         GameEntry NewMigGame59(string en, string liveDir, string file,
@@ -6530,9 +6545,9 @@ else
             && profCs59.Contains("public static void BackfillFavorite")
             && profCs59.Contains("MarkFavorite(g, leaving, matched.FileJson, \"switch\")"), "");
         string svcCs59 = File.ReadAllText(Path.Combine(srcRoot59, "Services", "BackupService.cs"));
-        Check("心目中的档: Prune 豁免指针包 + 行感叹号打标函数在 BackupService",
-            svcCs59.Contains("favFiles")
-            && svcCs59.Contains("b.Locked || favFiles.Contains(b.File)")
+        Check("心目中的档: Prune 仅锁定豁免（指针包不豁免）+ 行感叹号打标函数在 BackupService",
+            !svcCs59.Contains("favFiles")
+            && svcCs59.Contains("mine.Count(b => !b.Locked) > max")
             && svcCs59.Contains("public static void ApplyNewerThanLiveFlags"), "");
         string mainCs59 = File.ReadAllText(Path.Combine(srcRoot59, "MainWindow.xaml.cs"));
         Check("心目中的档: 筹码核对后同步打标 + older 点击还原指针包 + 文案接线",
@@ -6806,7 +6821,7 @@ else
             "留空使用默认位置；更改后新备份存入新目录，已有备份仍在原位置、可正常还原",
             "每次打开软件时增量扫描，只新增不重复",
             "选择后立即生效并自动保存；「跟随系统」会在 Windows 深浅色切换时自动联动",
-            "超出后自动删除最旧的备份（增量链不会被破坏）",
+            "超出后自动删除最旧的备份（增量链不会被破坏；🔒锁定的备份不占此配额）",
             "与上次备份对比，只打包有变化的文件，大幅节省空间",
             "防止增量链过长，全量是链的起点",
             "游戏库 games.json · 备份 backups\\ · 图标封面缓存 cache\\"
