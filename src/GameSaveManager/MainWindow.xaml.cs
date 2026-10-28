@@ -2517,6 +2517,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ? $"备份完成「{r.Note}」 {r.SizeText}（跳过 {skipped} 个占用文件）"
                 : $"备份完成「{r.Note}」 {r.SizeText}");
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
+        {
+            // live 已被最新备份覆盖：BackupAsFavorite 已把指针兜底移到最新包，
+            // 此处不报错，直接提示用户当前进度已备份（避免"让你备份却又说不用"的矛盾体验）
+            RefreshAfterChange(g);
+            ShowToast($"「{g.DisplayName}」当前进度已备份");
+        }
         catch (Exception ex)
         {
             ShowToast(ex.Message, true);

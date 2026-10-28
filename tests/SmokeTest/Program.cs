@@ -7654,6 +7654,56 @@ Check("视觉守卫: 「刷新路径」改名「探测路径」并移入存档�
     RecycleService.ReloadForTests();
 }
 
+// ── 63. 指针落后于最新备份：GetLiveState 报 changed，BackupAsFavorite「没有变化」兜底移指针 ──
+{
+    string vault63 = Path.Combine(temp, "vault63");
+    Store.HomeDirOverride = vault63;
+    Store.Init();
+    string saveDir63 = Path.Combine(temp, "saves_63");
+    Directory.CreateDirectory(saveDir63);
+    var g63 = new GameEntry { NameCN = "指针落后测试63", AppId = 8963 };
+    g63.SavePaths.Add(new SavePathEntry { Path = saveDir63 });
+    Store.Games.Add(g63);
+
+    string player63 = "玩家一";
+    g63.ActiveProfile = player63;
+
+    // 63.1 第一份备份（指针落到这一份）
+    File.WriteAllText(Path.Combine(saveDir63, "save.dat"), "v1");
+    File.SetLastWriteTime(Path.Combine(saveDir63, "save.dat"), DateTime.Now.AddMinutes(-30));
+    var rec1_63 = ProfileService.BackupAsFavorite(g63, "首份", false, "manual", out _);
+    Thread.Sleep(1100);
+
+    // 63.2 玩出新进度，第二份备份（指针应落到第二份）
+    File.WriteAllText(Path.Combine(saveDir63, "save.dat"), "v2");
+    File.SetLastWriteTime(Path.Combine(saveDir63, "save.dat"), DateTime.Now.AddMinutes(-20));
+    var rec2_63 = ProfileService.BackupAsFavorite(g63, "第二份", false, "manual", out _);
+    Thread.Sleep(1100);
+
+    // 63.3 手动把指针拨回第一份（模拟指针落后于最新备份）
+    ProfileService.MarkFavorite(g63, player63, rec1_63.FileJson, "manual");
+    // live=v2，最新备份=rec2(v2)，指针=rec1(v1) → GetLiveState 报 changed（指针语义不变）
+    var stBefore63 = BackupService.GetLiveState(g63, player63);
+    Check("63.1 指针落后且 live 新于指针 → changed（保持指针语义）",
+        stBefore63.Kind == "changed", $"kind={stBefore63.Kind}");
+
+    // 63.4 点立即备份：live 与最新备份一致 → 抛「没有变化」，BackupAsFavorite 兜底把指针移到最新包
+    bool noChange63 = false;
+    try { ProfileService.BackupAsFavorite(g63, "手动备份", false, "manual", out _); }
+    catch (InvalidOperationException ex) { noChange63 = ex.Message.Contains("没有变化"); }
+    Check("63.2 live 与最新备份一致 → 抛「没有变化」", noChange63, "");
+    Check("63.3 「没有变化」后指针兜底移到最新包 rec2",
+        g63.SwitchAnchors[player63] == rec2_63.FileJson,
+        $"anchor={g63.SwitchAnchors[player63]}, rec2={rec2_63.FileJson}");
+
+    // 63.5 指针纠正后，GetLiveState 回到 same
+    var stAfter63 = BackupService.GetLiveState(g63, player63);
+    Check("63.4 指针移到最新包后 → same",
+        stAfter63.Kind == "same", $"kind={stAfter63.Kind}");
+
+    Store.HomeDirOverride = null;
+}
+
 Console.WriteLine($"\n结果: {pass} 通过, {fail} 失败");
 try { Directory.Delete(temp, true); } catch { }
 Environment.Exit(fail == 0 ? 0 : 1);
