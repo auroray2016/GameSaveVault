@@ -346,6 +346,9 @@ public static class ProfileService
         {
             var rec = BackupService.Create(g, note, hot, out skippedFiles, profile: profile);
             MarkFavorite(g, rec.Profile ?? player, rec.FileJson, why);
+            // Create 内部的 Store.Save 发生在 MarkFavorite 之前，指针改动必须再落一次盘，
+            // 否则重启后指针仍停在旧备份，UI 误报"新存档未备份"、点备份又被"没有变化"拦截。
+            Store.Save();
             return rec;
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("没有变化"))
@@ -364,7 +367,11 @@ public static class ProfileService
                                      BackupRecord.ResolveFile(latest.FileJson),
                                      StringComparison.OrdinalIgnoreCase);
                 // 指针已落在这份包上：无新认可动作，保留原 why；悬空/指别处才兜底落指针
-                if (!alreadyHere) MarkFavorite(g, player, latest.FileJson, why);
+                if (!alreadyHere)
+                {
+                    MarkFavorite(g, player, latest.FileJson, why);
+                    Store.Save();
+                }
             }
             throw;
         }

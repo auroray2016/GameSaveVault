@@ -7704,6 +7704,49 @@ Check("视觉守卫: 「刷新路径」改名「探测路径」并移入存档�
     Store.HomeDirOverride = null;
 }
 
+// ── 64. BackupAsFavorite 指针持久化：Create 内部 Store.Save 早于 MarkFavorite，
+//    必须再落一次盘，否则重启后指针停在旧备份（UI 误报未备份 + 点备份被无变化拦截）──
+{
+    string vault64 = Path.Combine(temp, "vault64");
+    Store.HomeDirOverride = vault64;
+    Store.Init();
+    string saveDir64 = Path.Combine(temp, "saves_64");
+    Directory.CreateDirectory(saveDir64);
+    var g64 = new GameEntry { NameCN = "指针持久化测试64", AppId = 8964 };
+    g64.SavePaths.Add(new SavePathEntry { Path = saveDir64 });
+    Store.Games.Add(g64);
+
+    string player64 = "玩家一";
+    g64.ActiveProfile = player64;
+
+    // 64.1 第一份备份
+    File.WriteAllText(Path.Combine(saveDir64, "save.dat"), "v1");
+    File.SetLastWriteTime(Path.Combine(saveDir64, "save.dat"), DateTime.Now.AddMinutes(-30));
+    var rec1_64 = ProfileService.BackupAsFavorite(g64, "首份", false, "manual", out _);
+    Thread.Sleep(1100);
+
+    // 64.2 模拟退出自动备份（第二份），走 BackupAsFavorite
+    File.WriteAllText(Path.Combine(saveDir64, "save.dat"), "v2");
+    File.SetLastWriteTime(Path.Combine(saveDir64, "save.dat"), DateTime.Now.AddMinutes(-20));
+    var rec2_64 = ProfileService.BackupAsFavorite(g64, "已退出，自动备份", false, "auto", out _);
+
+    // 64.3 备份后内存指针应指向最新包 rec2
+    Check("64.1 备份后内存指针指向最新包",
+        g64.SwitchAnchors[player64] == rec2_64.FileJson,
+        $"anchor={g64.SwitchAnchors[player64]}, rec2={rec2_64.FileJson}");
+
+    // 64.4 关键：重新从磁盘加载，指针必须仍指向 rec2（验证持久化）
+    Store.Init();
+    var g64re = Store.Games.First(x => x.AppId == 8964);
+    string reloadedAnchor = g64re.SwitchAnchors != null
+        && g64re.SwitchAnchors.TryGetValue(player64, out var a64) ? a64 : "";
+    Check("64.2 重启加载后指针仍指向最新包（持久化）",
+        reloadedAnchor == rec2_64.FileJson,
+        $"reloaded={reloadedAnchor}, rec2={rec2_64.FileJson}");
+
+    Store.HomeDirOverride = null;
+}
+
 Console.WriteLine($"\n结果: {pass} 通过, {fail} 失败");
 try { Directory.Delete(temp, true); } catch { }
 Environment.Exit(fail == 0 ? 0 : 1);
